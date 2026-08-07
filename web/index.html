@@ -166,7 +166,7 @@
     <div class="scard">
       <h3>翻倍 OKR <span id="maskBtn" title="隐藏/显示金额" style="cursor:pointer;float:right;font-weight:400">👁</span></h3>
       <div class="krow"><span>当前总资产</span><b id="okAssets">—</b></div>
-      <div class="krow"><span>目标</span><b id="okTarget">¥3,000,000</b></div>
+      <div class="krow"><span>目标</span><b id="okTarget">—</b></div>
       <div class="krow"><span>距翻倍还需</span><b id="okRemain">—</b></div>
       <div class="krow"><span>当前进度</span><b id="okProg" style="color:var(--ok)">—</b></div>
       <div class="bar"><i id="okBar" style="width:0%"></i></div>
@@ -224,7 +224,7 @@
     <textarea id="posText" class="qedit-ta" style="height:200px;max-width:none" placeholder="把券商里的持仓整段粘进来即可（标的 / 市值 / 盈亏 / 数量 / 现价 / 成本…），一段或多行都行"></textarea>
     <div style="display:flex;gap:10px;margin:10px 0">
       <input id="posCash" class="pos-in" placeholder="现金余额(元，可留空)"/>
-      <input id="posPrin" class="pos-in" placeholder="初始本金(默认 1,500,000)"/>
+      <input id="posPrin" class="pos-in" placeholder="初始本金(元，可留空)"/>
     </div>
     <button id="posSubmit" style="width:100%;padding:11px;font-size:15px">整理并更新后台</button>
     <div class="auth-switch"><a id="posCancel">取消</a></div>
@@ -607,14 +607,14 @@ document.getElementById('posSubmit').onclick=()=>{
   const raw=(document.getElementById('posText').value||'').trim();
   if(!raw){document.getElementById('posText').focus();return;}
   const cash=(document.getElementById('posCash').value||'').trim();
-  const prin=(document.getElementById('posPrin').value||'').trim()||'1,500,000';
+  const prin=(document.getElementById('posPrin').value||'').trim();
   const prompt=`【更新持仓·写入后台唯一事实源 holdings.md】以下是我的最新持仓（券商导出）。请按规则更新后台数据：\n`+
     `① 覆盖 holdings.md 当前持仓块（股数/成本以此为准，禁 API 估算）；\n`+
     `② 港股市值按汇率(HKD→CNY≈0.91)换算，禁用 HKD 原值当 CNY；\n`+
     `③ 逐项求和算当前总资产，勿心算；\n`+
     `④ 追加当日快照到 holdings_history/；\n`+
     `⑤ 已清仓的幽灵标的不得出现。\n`+
-    `现金余额：${cash||'（沿用上次/未提供）'}；初始本金：${prin}（翻倍目标=本金×2）。\n\n持仓明细：\n${raw}`;
+    `现金余额：${cash||'（沿用上次/未提供）'}；初始本金：${prin||'（沿用上次/未提供）'}${prin?'（翻倍目标=本金×2）':''}。\n\n持仓明细：\n${raw}`;
   posOverlay.style.display='none';
   document.getElementById('posText').value='';document.getElementById('posCash').value='';document.getElementById('posPrin').value='';
   send(prompt);

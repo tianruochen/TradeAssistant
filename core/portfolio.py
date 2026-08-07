@@ -23,7 +23,10 @@ def summary() -> dict:
         return {}
     t = p.read_text(encoding="utf-8")
     total = _num(r"当前总资产.*?¥\s*([\d,]+(?:\.\d+)?)", t)
-    initial = _num(r"初始本金.*?¥\s*([\d,]+(?:\.\d+)?)", t) or 1_500_000.0
+    initial = _num(r"初始本金.*?¥\s*([\d,]+(?:\.\d+)?)", t)   # 未设置就别瞎默认(否则新用户凭空冒出目标)
+    if initial is None:
+        # 没设初始本金:只回当前总资产(若有),目标/进度留空等用户设定
+        return {"total_assets": round(total, 2)} if total is not None else {}
     target = initial * 2
     out = {"initial": initial, "target": target}
     if total is not None:
