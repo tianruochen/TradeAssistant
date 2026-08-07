@@ -1,0 +1,36 @@
+# secrets / env
+secrets.env
+*.secrets.env
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# data runtime (保留 .md 资产,忽略运行时 db 和快照可按需调整)
+data/*.db
+var/
+*.log
+
+# node / web
+web/node_modules/
+web/dist/
+
+# os
+.DS_Store
+
+# 多租户运行时数据(不入库)
+data/users/
+data/users.db
+logs/
+.tradeagent.pid
+data/stats.json
+
+# 个人数据不入库(持仓/策略/计划/对话/通知/快照);仅保留 *.example.md 模板
+data/*.md
+!data/*.example.md
+data/conversations/
+data/notifications/
+data/holdings_history/

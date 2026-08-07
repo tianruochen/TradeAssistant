@@ -1,0 +1,27 @@
+# TradeAssistant 配置
+# 主 + 子 agent 共享的默认模型；单个 agent 可在其 agents/<name>/agent.yaml 覆盖。
+
+model:
+  provider: qwen           # 适配器按模型名自动选；qwen3.8-max 走通用 OpenAI + <think> 拆分
+  name: qwen3.8-max        # 主 agent(Alpha)用：强模型做决策
+  sub_agent: qwen3.7-plus  # 专家子 agent(hunter/risk/ledger)用：同族更快更省的分层模型(机械活)
+  base_url: https://llm.xinlicloud.top/v1
+  # api_key 从 secrets.env 的 LLM_API_KEY 读
+
+server:
+  host: 0.0.0.0
+  port: 8760                # TradeAssistant 独立端口(digital-life 用 8642)
+
+data_dir: data              # holdings.md / watchlist.md / 交易策略.md / holdings_history/
+
+# 主 agent + 专家子 agent。扩展新专家 = 在此加一条 + 建 agents/<name>/。
+agents:
+  primary: alpha             # 主对话 agent
+  experts:                  # 可被主 agent 通过 consult_<name> 工具调用的专家
+    - hunter                # 机会挖掘
+    - risk                  # 风控
+    - ledger                # 持仓账本 / 翻倍进度
+
+# 港股→CNY 汇率(持仓换算,禁止用 HKD 原值当 CNY)
+fx:
+  hkd_cny: 0.91

@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# TradeAssistant 常驻控制脚本：start / stop / restart / status / logs
+# 用法：./tradeagent {start|stop|restart|status|logs}
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+# python 解释器：优先环境变量 TA_PYTHON，其次 conda，其次 python3
+PYTHON="${TA_PYTHON:-/opt/miniconda3/bin/python3.13}"
+[ -x "$PYTHON" ] || PYTHON="$(command -v python3)"
+
+PIDFILE="$ROOT/.tradeagent.pid"
+LOGFILE="$ROOT/logs/tradeagent.log"
+mkdir -p "$ROOT/logs"
+
+PORT="$(grep -E '^\s*port:' config.yaml | head -1 | grep -oE '[0-9]+' | head -1 || echo 8760)"
+
+_pid() { [ -f "$PIDFILE" ] && cat "$PIDFILE" 2>/dev/null || true; }
+_alive() { local p; p="$(_pid)"; [ -n "$p" ] && kill -0 "$p" 2>/dev/null; }
+
+start() {
+  if _alive; then echo "TradeAssistant 已在运行 (pid $(_pid), 端口 $PORT)"; return 0; fi
+  # 清理端口上的野进程（上次非正常退出）
+  local stale; stale="$(pgrep -f 'python3.*server.py' || true)"
+  [ -n "$stale" ] && { echo "清理残留进程: $stale"; kill $stale 2>/dev/null || true; sleep 1; }
+  echo "启动 TradeAssistant ($PYTHON server.py, 端口 $PORT)..."
+  nohup "$PYTHON" server.py >>"$LOGFILE" 2>&1 &
+  echo $! >"$PIDFILE"
+  sleep 2
+  if _alive; then echo "✓ 启动成功 (pid $(_pid))  日志: $LOGFILE"; else echo "✗ 启动失败，看日志: $LOGFILE"; tail -20 "$LOGFILE"; return 1; fi
+}
+
+stop() {
+  if _alive; then echo "停止 TradeAssistant (pid $(_pid))..."; kill "$(_pid)" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do _alive || break; sleep 1; done
+    _alive && { echo "强制结束"; kill -9 "$(_pid)" 2>/dev/null || true; }
+    rm -f "$PIDFILE"; echo "✓ 已停止"
+  else echo "TradeAssistant 未在运行"; rm -f "$PIDFILE"; fi
+}
+
+status() {
+  if _alive; then echo "● 运行中 (pid $(_pid), 端口 $PORT)"
+    curl -s "localhost:$PORT/health" >/dev/null 2>&1 && echo "  健康检查: OK" || echo "  健康检查: 无响应"
+  else echo "○ 未运行"; fi
+}
+
+case "${1:-}" in
+  start)   start ;;
+  stop)    stop ;;
+  restart) stop; sleep 1; start ;;
+  status)  status ;;
+  logs)    tail -f "$LOGFILE" ;;
+  *) echo "用法: $0 {start|stop|restart|status|logs}"; exit 1 ;;
+esac

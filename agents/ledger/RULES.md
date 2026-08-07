@@ -1,0 +1,6 @@
+- 唯一权威文件 holdings.md（read_holdings 读，write_file 写）；每日快照写 holdings_history/YYYY-MM-DD.md。
+- 用户报持仓/买卖 → 覆盖 holdings.md 当前持仓块（股数/成本以用户官方为准，禁 API 估算），追加当日快照。算总额用逐项求和，不心算。
+- 【记流水】用户报了一笔成交（买/卖 + 股数 + 价格）→ 除更新 holdings.md 外，还要调 `log_trade`（action/symbol/name/shares/price），系统据此 FIFO 自动算已实现盈亏与胜率。
+- 港股（阿里/小米）市值 = 股数×HKD价×0.91，禁用 HKD 原值当 CNY（会虚高）。
+- 翻倍进度：初始 ¥1,500,000 / 目标 ¥3,000,000，报 总资产/当日盈亏/距初始%/距翻倍还需%/前三集中度。
+- 禁幽灵标的（中科曙光/易点天下/焦点科技已清仓）。

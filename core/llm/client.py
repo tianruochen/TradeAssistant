@@ -1,0 +1,227 @@
+"""LLM 客户端：阻塞补全 + 流式（含工具调用增量缓冲）。
+
+digital-life 的 agent 只有阻塞式；TradeAssistant 的 web 要豆包式流式，所以这里实现
+`stream()`：边收边吐 thinking / content 增量，同时把分片的 tool_calls 按 index
+缓冲拼回完整结构，供上层 agent loop 交错执行工具。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import random
+from typing import Any, AsyncIterator
+
+import httpx
+
+from core import stats
+from . import providers
+
+_TIMEOUT = httpx.Timeout(connect=5.0, read=180.0, write=10.0, pool=5.0)
+logger = logging.getLogger("tradeagent.llm")
+
+# 中转常见 429「令牌并发过多」+ 瞬时 5xx → 退避重试(并发/拥堵多为短暂)
+_RETRY_CODES = {429, 500, 502, 503, 504}
+_MAX_TRIES = 7
+# 全局并发闸:同一 Key 并发过多正是 429 主因,限流从源头减少触发(定时任务+用户+子agent同抢)
+_SEM = asyncio.Semaphore(2)
+
+
+def _backoff(attempt: int) -> float:
+    return min(12.0, 1.0 * (2 ** attempt)) + random.uniform(0, 0.6)   # 1,2,4,8,12(+抖动)
+
+
+class _ThinkSplitter:
+    """把 content 流里的 <think>...</think> 拆成 thinking / content 两路。
+
+    中转的模型（glm-5.2/deepseek/qwen/kimi）不用 reasoning_content 字段，而是把
+    思考包在正文的 <think></think> 标签里。逐 delta 喂入，处理跨分片的半个标签，
+    输出 [("thinking"|"content", text), ...]。
+    """
+
+    OPEN = "<think>"
+    CLOSE = "</think>"
+
+    def __init__(self) -> None:
+        self.buf = ""
+        self.mode = "content"  # or "thinking"
+
+    def _safe_keep(self, tag: str) -> int:
+        """buf 末尾有多少字符可能是 tag 的前缀 → 暂时留住，等下一片再判。"""
+        for k in range(min(len(tag) - 1, len(self.buf)), 0, -1):
+            if self.buf.endswith(tag[:k]):
+                return k
+        return 0
+
+    def feed(self, text: str) -> list[tuple[str, str]]:
+        self.buf += text
+        out: list[tuple[str, str]] = []
+        while True:
+            if self.mode == "content":
+                i = self.buf.find(self.OPEN)
+                if i == -1:
+                    keep = self._safe_keep(self.OPEN)
+                    emit = self.buf[: len(self.buf) - keep]
+                    if emit:
+                        out.append(("content", emit))
+                    self.buf = self.buf[len(self.buf) - keep:]
+                    break
+                if i > 0:
+                    out.append(("content", self.buf[:i]))
+                self.buf = self.buf[i + len(self.OPEN):]
+                self.mode = "thinking"
+            else:
+                j = self.buf.find(self.CLOSE)
+                if j == -1:
+                    keep = self._safe_keep(self.CLOSE)
+                    emit = self.buf[: len(self.buf) - keep]
+                    if emit:
+                        out.append(("thinking", emit))
+                    self.buf = self.buf[len(self.buf) - keep:]
+                    break
+                if j > 0:
+                    out.append(("thinking", self.buf[:j]))
+                self.buf = self.buf[j + len(self.CLOSE):]
+                self.mode = "content"
+        return out
+
+    def flush(self) -> list[tuple[str, str]]:
+        if not self.buf:
+            return []
+        kind = "thinking" if self.mode == "thinking" else "content"
+        out = [(kind, self.buf)]
+        self.buf = ""
+        return out
+
+
+
+class LLMError(RuntimeError):
+    pass
+
+
+class LLMClient:
+    def __init__(self, model_cfg: dict[str, Any]) -> None:
+        self.cfg = model_cfg
+        self.url = providers.chat_url(model_cfg.get("base_url", ""))
+        self.headers = {
+            "Authorization": f"Bearer {model_cfg.get('api_key', '')}",
+            "Content-Type": "application/json",
+        }
+
+    async def complete(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        *,
+        max_tokens: int | None = None,
+    ) -> dict[str, Any]:
+        """阻塞式：返回 assistant message dict（content / reasoning_content / tool_calls）。"""
+        stats.incr_llm_call()
+        payload = providers.build_payload(self.cfg, messages, tools, stream=False, max_tokens=max_tokens)
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+            for attempt in range(_MAX_TRIES):
+                async with _SEM:
+                    r = await c.post(self.url, headers=self.headers, json=payload)
+                if r.status_code == 200:
+                    return r.json()["choices"][0]["message"]
+                if r.status_code in _RETRY_CODES and attempt < _MAX_TRIES - 1:
+                    logger.warning("LLM %d 重试(%d/%d)", r.status_code, attempt + 1, _MAX_TRIES)
+                    await asyncio.sleep(_backoff(attempt))
+                    continue
+                raise LLMError(f"LLM {r.status_code}: {r.text[:300]}")
+
+    async def stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        *,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """流式：yield 事件
+
+        - {"type":"thinking","delta": str}   模型思考(reasoning_content)增量
+        - {"type":"content","delta": str}    正文增量
+        - {"type":"final","message": {...}, "usage": {...}}  收尾，message 含拼好的 tool_calls
+
+        message 结构与 complete() 一致，供 agent loop 判断是否要执行工具。
+        """
+        stats.incr_llm_call()
+        payload = providers.build_payload(self.cfg, messages, tools, stream=True, max_tokens=max_tokens)
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tool_calls: dict[int, dict[str, Any]] = {}  # index -> {id,type,function:{name,arguments}}
+        usage: dict[str, Any] = {}
+        splitter = _ThinkSplitter()
+
+        def _route(kind: str, text: str):
+            if kind == "thinking":
+                reasoning_parts.append(text)
+            else:
+                content_parts.append(text)
+            return {"type": kind, "delta": text}
+
+        for attempt in range(_MAX_TRIES):
+            content_parts.clear(); reasoning_parts.clear(); tool_calls.clear(); usage.clear()
+            splitter = _ThinkSplitter()
+            async with _SEM:
+                async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+                    async with c.stream("POST", self.url, headers=self.headers, json=payload) as r:
+                        if r.status_code != 200:
+                            body = (await r.aread()).decode("utf-8", "ignore")
+                            if r.status_code in _RETRY_CODES and attempt < _MAX_TRIES - 1:
+                                logger.warning("LLM流 %d 重试(%d/%d)", r.status_code, attempt + 1, _MAX_TRIES)
+                                await asyncio.sleep(_backoff(attempt))
+                                continue   # 尚未 yield 任何增量,重试不会重复
+                            raise LLMError(f"LLM {r.status_code}: {body[:300]}")
+                        async for line in r.aiter_lines():
+                            if not line or not line.startswith("data:"):
+                                continue
+                            data = line[len("data:"):].strip()
+                            if data == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(data)
+                            except json.JSONDecodeError:
+                                continue
+                            if chunk.get("usage"):
+                                usage.update(chunk["usage"])
+                            choices = chunk.get("choices") or []
+                            if not choices:
+                                continue
+                            delta = choices[0].get("delta") or {}
+
+                            # 部分模型用独立 reasoning_content 字段
+                            rc = delta.get("reasoning_content")
+                            if rc:
+                                yield _route("thinking", rc)
+
+                            # 多数模型把思考包在 content 的 <think></think> 里 → 拆分
+                            ct = delta.get("content")
+                            if ct:
+                                for kind, text in splitter.feed(ct):
+                                    yield _route(kind, text)
+
+                            for tc in delta.get("tool_calls") or []:
+                                idx = tc.get("index", 0)
+                                slot = tool_calls.setdefault(
+                                    idx, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
+                                )
+                                if tc.get("id"):
+                                    slot["id"] = tc["id"]
+                                fn = tc.get("function") or {}
+                                if fn.get("name"):
+                                    slot["function"]["name"] = fn["name"]
+                                if fn.get("arguments"):
+                                    slot["function"]["arguments"] += fn["arguments"]
+
+            for kind, text in splitter.flush():
+                yield _route(kind, text)
+
+            message: dict[str, Any] = {"role": "assistant", "content": "".join(content_parts)}
+            if reasoning_parts:
+                message["reasoning_content"] = "".join(reasoning_parts)
+            if tool_calls:
+                message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
+            yield {"type": "final", "message": message, "usage": usage}
+            return
