@@ -43,6 +43,13 @@ async def auth_mw(request: web.Request, handler):
 
 async def register_handler(req: web.Request) -> web.Response:
     b = await req.json()
+    # 生产加固:REGISTER_CODE 未设=开放注册;设为 off/closed=完全关闭;其它值=需邀请码匹配
+    import os
+    code = (os.getenv("REGISTER_CODE") or "").strip()
+    if code.lower() in ("off", "closed", "disabled"):
+        return web.json_response({"error": "注册已关闭"}, status=403)
+    if code and (b.get("invite") or "").strip() != code:
+        return web.json_response({"error": "邀请码错误"}, status=403)
     ok, res = users.register(b.get("username", ""), b.get("password", ""))
     if not ok:
         return web.json_response({"error": res}, status=400)

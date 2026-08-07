@@ -247,6 +247,7 @@
     <div id="authForms">
       <input id="authUser" placeholder="用户名"/>
       <input id="authPass" type="password" placeholder="密码（≥6位）"/>
+      <input id="authInvite" placeholder="邀请码（注册需要，登录留空）" style="display:none"/>
       <button id="authSubmit">登录</button>
       <div class="auth-switch"><span id="authToggleTip">没有账号？</span><a id="authToggle">注册</a></div>
     </div>
@@ -667,12 +668,14 @@ function showAuth(mode){authMode=mode;ov.style.display='flex';
   document.getElementById('authSubmit').textContent=mode==='login'?'登录':'注册';
   document.getElementById('authToggleTip').textContent=mode==='login'?'没有账号？':'已有账号？';
   document.getElementById('authToggle').textContent=mode==='login'?'注册':'去登录';
+  document.getElementById('authInvite').style.display=mode==='register'?'':'none';
   document.getElementById('authMsg').textContent='';}
 function showKey(){ov.style.display='flex';document.getElementById('authForms').style.display='none';document.getElementById('keyForm').style.display='';}
 document.getElementById('authToggle').onclick=()=>showAuth(authMode==='login'?'register':'login');
 document.getElementById('authSubmit').onclick=async()=>{
   const u=document.getElementById('authUser').value.trim(),p=document.getElementById('authPass').value;
-  const r=await fetch('/api/'+(authMode==='login'?'login':'register'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+  const invite=document.getElementById('authInvite').value.trim();
+  const r=await fetch('/api/'+(authMode==='login'?'login':'register'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p,invite})});
   const d=await r.json();if(!r.ok){document.getElementById('authMsg').textContent=d.error||'失败';return;}
   TOKEN=d.token;localStorage.setItem('ta_token',TOKEN);postAuth();};
 document.getElementById('keySubmit').onclick=async()=>{
