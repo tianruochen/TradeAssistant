@@ -21,11 +21,12 @@ cd /opt/TradeAssistant
 pip3 install -r requirements.txt      # akshare/pandas 较大,耐心等
 ```
 
-## 3. 配置密钥
+## 3. 配置
 ```bash
 cp secrets.env.example secrets.env
-vi secrets.env        # 填 LLM_API_KEY；TA_OWNER_UID 先留空,注册后再填
+# 自带Key SaaS:LLM_API_KEY 通常留空(每个用户在网页里填自己的Key)。TA_OWNER_UID 注册后再填。
 ```
+> **API Key 不在这里填**——每个用户注册登录后,网页会弹框让 ta 填自己的 LLM Key(存各自账户)。你作为业主也在网页里填自己的 Key,后台定时任务会用它。
 
 ## 4. 常驻运行（二选一）
 **A. systemd（推荐）**

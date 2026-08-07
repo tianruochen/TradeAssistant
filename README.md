@@ -21,7 +21,7 @@ git clone https://github.com/tianruochen/TradeAssistant.git
 cd TradeAssistant
 pip install -r requirements.txt
 
-cp secrets.env.example secrets.env    # 填入你的 LLM_API_KEY（OpenAI 兼容中转/官方）
+cp secrets.env.example secrets.env    # LLM_API_KEY 通常留空:每个用户在网页里填自己的Key
 
 python3 server.py                     # 或 ./tradeagent start
 # 打开 http://127.0.0.1:8760 —— 首个注册的账户即你的业主账户

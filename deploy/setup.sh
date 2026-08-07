@@ -10,7 +10,7 @@ echo "▶ 安装依赖..."; "$PY" -m pip install -q -r requirements.txt
 
 if [ ! -f secrets.env ]; then
   cp secrets.env.example secrets.env
-  echo "⚠ 已生成 secrets.env —— 请填入 LLM_API_KEY 后再启动:  vi $ROOT/secrets.env"
+  echo "ℹ 已生成 secrets.env(LLM_API_KEY 通常留空——每个用户在网页里填自己的Key)"
 fi
 
 echo "▶ 安装 systemd 服务 tradeassistant ..."
@@ -29,7 +29,7 @@ cat <<EOF
    本机自检:  curl -s localhost:$PORT/health
    看日志:    journalctl -u tradeassistant -f
    下一步:
-   1) 若还没填 Key: vi $ROOT/secrets.env  然后 sudo systemctl restart tradeassistant
+   1) API Key 不用在这填——注册登录后在网页里填各自的 Key(业主也在网页填自己的Key,后台任务会用它)
    2) 阿里云安全组放行 TCP $PORT(来源限你的IP);或上 nginx+HTTPS(见 docs/DEPLOY.md, deploy/nginx.conf)
    3) 浏览器注册首个账户 → 取 uid 填回 secrets.env 的 TA_OWNER_UID:
       sqlite3 data/users.db "select uid,username from users;"
