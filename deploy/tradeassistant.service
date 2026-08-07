@@ -1,0 +1,23 @@
+# systemd 服务模板 —— 放到 /etc/systemd/system/tradeassistant.service
+# 按需改 User / WorkingDirectory / ExecStart 的 python 路径,然后:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now tradeassistant
+#   sudo systemctl status tradeassistant
+#   journalctl -u tradeassistant -f     # 看日志
+[Unit]
+Description=TradeAssistant (个人A股交易决策助手)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=CHANGE_ME_USER
+WorkingDirectory=/opt/TradeAssistant
+ExecStart=/usr/bin/python3 server.py
+Restart=always
+RestartSec=5
+# 服务自身会读 WorkingDirectory 下的 secrets.env
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
