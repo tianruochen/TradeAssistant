@@ -226,9 +226,10 @@ def build_app() -> web.Application:
 
 
 def main() -> None:
+    import os
     cfg = config().get("server") or {}
-    host = cfg.get("host", "0.0.0.0")
-    port = int(cfg.get("port", 8760))
+    host = os.getenv("TA_HOST") or cfg.get("host", "0.0.0.0")   # 生产走 nginx 时设 127.0.0.1
+    port = int(os.getenv("TA_PORT") or cfg.get("port", 8760))
     web.run_app(build_app(), host=host, port=port)
 
 
