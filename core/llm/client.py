@@ -104,8 +104,13 @@ class LLMClient:
     def __init__(self, model_cfg: dict[str, Any]) -> None:
         self.cfg = model_cfg
         self.url = providers.chat_url(model_cfg.get("base_url", ""))
+        key = (model_cfg.get("api_key") or "").strip()
+        # 校验:空 / 占位符 / 非 ASCII(如 'sk-你的key')会让请求头崩(UnicodeEncodeError),提前给清晰报错
+        if not key or not key.isascii() or "你的key" in key:
+            raise LLMError("未配置有效的 API Key —— 请在网页右上角/账户区「改 Key」填入你的 Key；"
+                           "后台定时任务需在 secrets.env 设 TA_OWNER_UID 指向已填 Key 的业主账户。")
         self.headers = {
-            "Authorization": f"Bearer {model_cfg.get('api_key', '')}",
+            "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
         }
 
