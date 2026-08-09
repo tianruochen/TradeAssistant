@@ -186,7 +186,7 @@
     <div class="scard">
       <div class="ov-row">
         <span class="ov-btn" id="holdLink">💼 持仓</span>
-        <span class="ov-btn" id="watchLink">👁 候选池</span>
+        <span class="ov-btn" id="watchLink">👁 候选</span>
         <span class="ov-btn" id="perfLink">📈 绩效</span>
       </div>
     </div>
@@ -361,7 +361,7 @@ function backToChat(){thv.style.display='none';thread.style.display='';feed.scro
 let lastAssets={};
 async function loadAssets(){try{lastAssets=await (await authFetch('/api/assets')).json();}catch(e){}}
 function openAssets(which){const body=which==='holdings'?lastAssets.holdings:lastAssets.watchlist;
-  const title=which==='holdings'?'💼 持仓明细':'👁 观察池';
+  const title=which==='holdings'?'💼 持仓明细':'👁 候选';
   thv.innerHTML=`<span class="back" id="asBack">← 返回对话</span><h2 style="margin:8px 0">${title}</h2>`+
     `<div class="bubble" style="display:block;max-width:none">${md(body||'（暂无内容）')}</div>`;
   thread.style.display='none';thv.style.display='';feed.scrollTop=0;
@@ -379,7 +379,7 @@ const GUIDE=`# 👋 欢迎使用 TradeAssistant
 ## 日常怎么用
 - **问 Alpha**：持仓 / 机会 / 风险 / 今日行情，或点输入框上方快捷提问（可自定义✏️）。
 - **💰 交易**：买卖成交后录一笔（支持多笔），自动算已实现盈亏 / 胜率。
-- **左侧卡片**：翻倍 OKR、速览（持仓 / 候选池）、交易记录、风控体检；右上角 **大盘环境**（点开看均线详情）。
+- **左侧卡片**：翻倍 OKR、速览（持仓 / 候选）、交易记录、风控体检；右上角 **大盘环境**（点开看均线详情）。
 - **定时任务**：工作日盘中 / 收盘自动汇总，周末复盘——结果进 🔔 铃铛并作为消息落进对话。
 - **消息色标**：🔴 风险 / 💡 机会，一眼区分。
 
