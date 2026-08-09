@@ -34,3 +34,4 @@ data/*.md
 data/conversations/
 data/notifications/
 data/holdings_history/
+backups/

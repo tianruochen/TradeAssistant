@@ -1,0 +1,9 @@
+[Unit]
+Description=每日触发 TradeAssistant 数据备份
+
+[Timer]
+OnCalendar=*-*-* 23:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

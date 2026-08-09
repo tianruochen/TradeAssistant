@@ -1,0 +1,13 @@
+# 每日 data/ 备份 —— 放到 /etc/systemd/system/ 后:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now tradeassistant-backup.timer
+#   systemctl list-timers | grep tradeassistant     # 看下次运行
+# 改 WorkingDirectory / User 为你的实际路径与用户。
+[Unit]
+Description=TradeAssistant 每日数据备份
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/TradeAssistant
+ExecStart=/usr/bin/env bash deploy/backup.sh
