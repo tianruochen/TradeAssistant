@@ -126,7 +126,18 @@
   button{border:none;background:var(--brand);color:#fff;border-radius:10px;padding:9px 18px;font-size:14px;cursor:pointer}
   button:disabled{opacity:.45;cursor:default}
   .cursor::after{content:"▌";color:var(--brand);animation:b 1s steps(2) infinite}@keyframes b{50%{opacity:0}}
-  @media(max-width:820px){.side{display:none}}
+  @media(max-width:820px){
+    #menuBtn{display:inline-block !important}
+    .side{position:fixed;left:0;top:0;bottom:0;width:82vw;max-width:320px;z-index:60;
+      transform:translateX(-100%);transition:transform .25s ease}
+    .side.open{transform:translateX(0);box-shadow:2px 0 24px rgba(0,0,0,.35)}
+    #envCard,#navrail,#toBottom{display:none !important}
+    #feed,.inputbar{padding-right:0 !important}
+    .thread{padding:16px 12px}
+    .quick,.inputinner,.disclaimer{padding-left:4px;padding-right:4px}
+    .notif-panel{width:92vw;right:4vw}
+    .topbar{padding:0 12px}
+  }
   /* 宽屏:右侧给环境卡/导航条留出通道,对话整体左移不局促 */
   @media(min-width:1400px){#feed,.inputbar{padding-right:190px}}
   .auth-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:100}
@@ -161,6 +172,7 @@
 </head>
 <body>
 <div class="wrap">
+  <div id="drawerBg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:55"></div>
   <aside class="side">
     <div class="brand"><span class="dot"></span>Alpha · 翻倍之路</div>
     <div class="scard">
@@ -198,7 +210,7 @@
     <div class="foot" id="modelFoot">qwen3.8-max · 流式</div>
   </aside>
   <div class="main">
-    <div class="topbar"><span class="tb-title">Alpha · 决策中心</span><span class="tb-right"><span class="callpill" id="callsTop">⚡ 0 / 1000</span><span id="bell" title="通知" style="cursor:pointer;position:relative;font-size:16px">🔔<span id="bellBadge" class="badge" style="display:none"></span></span><select id="modelSel" title="选择模型"></select><select id="fontSel" title="对话字号"><option value="13.5">小</option><option value="15">中</option><option value="17">大</option><option value="19">特大</option></select><span id="helpBtn" title="使用指南" style="cursor:pointer;font-size:15px">❓</span><span id="themeBtn" title="暗色/亮色（防窥屏）" style="cursor:pointer">🌙</span></span></div>
+    <div class="topbar"><span id="menuBtn" title="菜单" style="cursor:pointer;font-size:19px;display:none;margin-right:4px">☰</span><span class="tb-title">Alpha · 决策中心</span><span class="tb-right"><span class="callpill" id="callsTop">⚡ 0 / 1000</span><span id="bell" title="通知" style="cursor:pointer;position:relative;font-size:16px">🔔<span id="bellBadge" class="badge" style="display:none"></span></span><select id="modelSel" title="选择模型"></select><select id="fontSel" title="对话字号"><option value="13.5">小</option><option value="15">中</option><option value="17">大</option><option value="19">特大</option></select><span id="helpBtn" title="使用指南" style="cursor:pointer;font-size:15px">❓</span><span id="themeBtn" title="暗色/亮色（防窥屏）" style="cursor:pointer">🌙</span></span></div>
     <div id="notifPanel" class="notif-panel" style="display:none"></div>
     <div id="feed"><div class="thread" id="thread"></div><div class="histview" id="history" style="display:none"></div></div>
     <div id="toBottom" title="回到最新">↓</div>
@@ -356,6 +368,12 @@ function openGuide(){thv.innerHTML='<span class="back" id="gdBack">← 返回对
   thread.style.display='none';thv.style.display='';feed.scrollTop=0;
   document.getElementById('gdBack').onclick=backToChat;}
 document.getElementById('helpBtn').onclick=()=>{if(openView==='guide')return backToChat();openGuide();openView='guide';};
+// 移动端抽屉侧栏
+const _side=document.querySelector('.side'),_bg=document.getElementById('drawerBg');
+function toggleDrawer(open){_side.classList.toggle('open',open);_bg.style.display=open?'block':'none';}
+document.getElementById('menuBtn').onclick=()=>toggleDrawer(!_side.classList.contains('open'));
+_bg.onclick=()=>toggleDrawer(false);
+_side.addEventListener('click',e=>{if(e.target.closest('.ov-btn,.quick span,a,.cal-grid .d.has'))toggleDrawer(false);});
 document.getElementById('holdLink').onclick=()=>{if(openView==='holdings')return backToChat();loadAssets().then(()=>{openAssets('holdings');openView='holdings';refreshViewLinks();});};
 document.getElementById('watchLink').onclick=()=>{if(openView==='watchlist')return backToChat();loadAssets().then(()=>{openAssets('watchlist');openView='watchlist';refreshViewLinks();});};
 // 绩效(track record):资产曲线 + 已实现盈亏/胜率/最大回撤
