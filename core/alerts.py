@@ -52,6 +52,12 @@ def _triggered(typ: str, px: float, thr: float) -> bool:
 def _in_trading_hours(now: datetime) -> bool:
     if now.weekday() >= 5:
         return False
+    try:                       # 节假日休市也跳过(真实交易日历)
+        from core.tools.market_tools import is_trading_day
+        if not is_trading_day(now.strftime("%Y-%m-%d")):
+            return False
+    except Exception:
+        pass
     hm = now.hour * 60 + now.minute
     return (9 * 60 + 30) <= hm <= (11 * 60 + 30) or (13 * 60) <= hm <= (15 * 60)
 

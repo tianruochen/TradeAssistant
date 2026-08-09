@@ -85,6 +85,13 @@ async def run_loop(stop: asyncio.Event) -> None:
         hhmm = now.strftime("%H:%M")
         weekday = now.weekday()
         jobs = _JOBS if weekday < 5 else (_WEEKEND_JOBS if weekday == 5 else [])
+        if weekday < 5:   # 工作日但遇节假日休市 → 跳过交易节奏(用真实交易日历)
+            try:
+                from core.tools.market_tools import is_trading_day
+                if not is_trading_day(today):
+                    jobs = []
+            except Exception:
+                pass
         if jobs:
             for label, times, prompt in jobs:
                 if hhmm in times and (f"{today} {hhmm}", label) not in fired:

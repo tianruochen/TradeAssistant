@@ -97,11 +97,33 @@ def _j(o: Any) -> str:
     return json.dumps(o, ensure_ascii=False, default=str)
 
 
+def _trading_days() -> set:
+    """klineshare 交易日历(近+未来+最新);无 key/失败返回空集(调用方退化为工作日判断)。"""
+    j = _ks_get("calendar", {}, "kscal", 6 * 3600)
+    d = (j or {}).get("data") or {}
+    days = set(d.get("recent_trading_days") or []) | set(d.get("future_trading_days") or [])
+    if d.get("latest_trading_day"):
+        days.add(d["latest_trading_day"])
+    return days
+
+
+def is_trading_day(date_str: str | None = None) -> bool:
+    """是否 A 股交易日(用真实日历,能识别节假日);无日历时退化为"工作日即交易日"。"""
+    ds = date_str or datetime.now().strftime("%Y-%m-%d")
+    days = _trading_days()
+    if not days:
+        try:
+            return datetime.strptime(ds, "%Y-%m-%d").weekday() < 5
+        except ValueError:
+            return True
+    return ds in days
+
+
 def _market_state() -> str:
     """A股此刻交易状态,给数据时效标注用——现价是实时还是收盘价。"""
     now = datetime.now()
-    if now.weekday() >= 5:
-        return "周末休市(现价=上周五收盘)"
+    if not is_trading_day():
+        return "休市(非交易日/节假日,现价=上一交易日收盘)"
     hm = now.hour * 60 + now.minute
     if hm < 9 * 60 + 15:
         return "盘前(现价=昨日收盘)"
