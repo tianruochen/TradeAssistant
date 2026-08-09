@@ -216,7 +216,7 @@
     <div id="toBottom" title="回到最新">↓</div>
     <div id="navrail" title="本次对话·点击跳转"></div>
     <div id="envCard" title="点击看指数均线详情">
-      <div class="ec-head">🎚 大盘环境 <b id="ecState">—</b></div>
+      <div class="ec-head">🎚 大盘环境 <span id="ecOpen" style="font-size:11px;font-weight:400;color:var(--sub)"></span><b id="ecState" style="float:right">—</b></div>
       <div class="ec-rows" id="ecRows"></div>
       <div class="ec-more">点击看均线详情 ›</div>
     </div>
@@ -451,6 +451,9 @@ const cnCol=d=>d>0?'#ef4444':d<0?'var(--ok)':'var(--sub)';   // A股惯例:涨�
 async function loadEnv(){try{const e=await (await authFetch('/api/market_env')).json();lastEnv=e;
   const st=document.getElementById('ecState');if(!st)return;
   st.textContent=e.env_cn||'—';st.style.color=_ENVCOL[e.env_cn]||'var(--sub)';
+  const op=document.getElementById('ecOpen');
+  if(op){const ms=(e.market_state||'').split('(')[0];const trading=/盘中/.test(ms);
+    op.textContent=ms?'· '+ms:'';op.style.color=trading?'var(--ok)':'var(--sub)';}
   const idx=e.indices||{},rows=document.getElementById('ecRows');
   const line=(nm,o)=>{if(!o)return '';const d=o.change_pct;
     return `<div class="ec-row"><span>${nm}</span>${o.close??'—'} <b style="color:${cnCol(d)}">${d!=null?(d>=0?'+':'')+d+'%':''}</b></div>`;};

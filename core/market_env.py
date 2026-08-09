@@ -42,12 +42,17 @@ def _ma(closes: list[float], n: int) -> float | None:
 
 
 def classify() -> dict:
-    """返回 {env, env_cn, detail, indices, note}。数据缺失时 env=None(调用方回退震荡)。"""
+    """返回 {env, env_cn, detail, indices, note, market_state}。数据缺失时 env=None。"""
+    try:
+        from core.tools.market_tools import _market_state
+        ms = _market_state()
+    except Exception:
+        ms = ""
     sh = _index_closes(_SH)
     cyb = _index_closes(_CYB)
     if not sh or not cyb:
         return {"env": None, "env_cn": None, "detail": "指数数据暂不可用(腾讯接口异常)",
-                "indices": {}, "note": "无法判定,建议按震荡市保守口径"}
+                "indices": {}, "note": "无法判定,建议按震荡市保守口径", "market_state": ms}
 
     sh_c, sh_ma = sh[-1], _ma(sh, 250)
     cyb_c, cyb_ma = cyb[-1], _ma(cyb, 120)
@@ -67,7 +72,7 @@ def classify() -> dict:
 
     if sh_ma is None or cyb_ma is None:
         return {"env": None, "env_cn": None, "detail": "历史不足以算 MA250/MA120",
-                "indices": indices, "note": "按震荡市保守口径"}
+                "indices": indices, "note": "按震荡市保守口径", "market_state": ms}
 
     sh_bull = sh_c > sh_ma
     cyb_bull = cyb_c > cyb_ma
@@ -87,4 +92,5 @@ def classify() -> dict:
     detail = (f"上证{'站上' if sh_bull else '跌破'}MA250({sh_dev * 100:+.1f}%,{'±5%内→围绕250线' if abs(sh_dev) < 0.05 else '明显偏离'})、"
               f"创业板指{'站上' if cyb_bull else '跌破'}MA120")
     return {"env": env, "env_cn": _ENV_CN[env], "detail": detail, "indices": indices,
-            "note": "均线口径(成交额阈值待接入两市总量,牛/熊极端待量能确认);上证±5%内按震荡"}
+            "note": "均线口径(成交额阈值待接入两市总量,牛/熊极端待量能确认);上证±5%内按震荡",
+            "market_state": ms}
