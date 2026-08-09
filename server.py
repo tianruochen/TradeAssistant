@@ -185,6 +185,12 @@ async def performance_handler(_req: web.Request) -> web.Response:
     return web.json_response(performance.summary())
 
 
+async def attribution_handler(_req: web.Request) -> web.Response:
+    import asyncio
+    from core import attribution
+    return web.json_response(await asyncio.to_thread(attribution.evaluate))
+
+
 async def index(_req: web.Request) -> web.Response:
     return web.FileResponse(ROOT / "web" / "index.html")
 
@@ -223,6 +229,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/assets", assets_handler)
     app.router.add_get("/api/health", health_scan_handler)
     app.router.add_get("/api/performance", performance_handler)
+    app.router.add_get("/api/attribution", attribution_handler)
     app.router.add_get("/", index)
     app.router.add_post("/api/chat/stream", chat_stream)     # SSE 接真 agent
     app.router.add_post("/feishu/webhook", feishu.webhook)   # 飞书事件订阅(不经 auth_mw:非 /api/)

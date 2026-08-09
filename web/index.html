@@ -377,8 +377,11 @@ _side.addEventListener('click',e=>{if(e.target.closest('.ov-btn,.quick span,a,.c
 document.getElementById('holdLink').onclick=()=>{if(openView==='holdings')return backToChat();loadAssets().then(()=>{openAssets('holdings');openView='holdings';refreshViewLinks();});};
 document.getElementById('watchLink').onclick=()=>{if(openView==='watchlist')return backToChat();loadAssets().then(()=>{openAssets('watchlist');openView='watchlist';refreshViewLinks();});};
 // 绩效(track record):资产曲线 + 已实现盈亏/胜率/最大回撤
-let lastPerf={};
-async function loadPerf(){try{lastPerf=await (await authFetch('/api/performance')).json();}catch(e){lastPerf={};}}
+let lastPerf={},lastAttr={};
+async function loadPerf(){try{const [p,a]=await Promise.all([
+  authFetch('/api/performance').then(r=>r.json()),
+  authFetch('/api/attribution').then(r=>r.json()).catch(()=>({}))]);
+  lastPerf=p;lastAttr=a;}catch(e){lastPerf={};lastAttr={};}}
 function perfSvg(pts){if(!pts||pts.length<2)return '<p style="color:var(--sub);margin:10px 0">资产曲线需要 ≥2 天快照，先积累几天（每日收盘「翻倍进度」会自动记）。</p>';
   const W=640,H=180,pad=10;const vs=pts.map(p=>p.total);const mn=Math.min(...vs),mx=Math.max(...vs),rng=(mx-mn)||1;
   const X=i=>pad+i*(W-2*pad)/(pts.length-1),Y=v=>H-pad-(v-mn)/rng*(H-2*pad);
@@ -405,7 +408,10 @@ function openPerf(){const p=lastPerf||{};const g=v=>masked?'••••':v;
     stat('成交笔数 / 决策留痕', `<b>${p.trade_count||0} / ${p.decision_count||0}</b>`)+
     stat('当前总资产 / 初始本金', `<b>${p.latest!=null?g(yuan(p.latest)):'—'} / ${p.initial!=null?g(yuan(p.initial)):'—'}</b>`)+
     '</div>'+
-    '<p style="color:var(--sub);font-size:12px;margin-top:14px">曲线取每日收盘快照的总资产；胜率按平仓笔 FIFO 统计。数据越久越有参考价值——这就是你的 track record。</p>';
+    '<h3 style="margin:16px 0 6px">决策命中率 '+(lastAttr.win_rate!=null?`<b style="color:${cnCol(lastAttr.win_rate-50)}">${lastAttr.win_rate}%</b> <span style="font-size:12px;color:var(--sub)">(${lastAttr.wins}/${lastAttr.evaluated} 条已评)</span>`:'<span style="font-size:12px;color:var(--sub)">暂无可评估决策</span>')+'</h3>'+
+    ((lastAttr.items||[]).filter(x=>x.outcome==='hit'||x.outcome==='miss').slice(0,12).map(x=>
+      `<div class="notif-item" style="border-left:3px solid ${x.hit?'var(--ok)':'#ef4444'};padding-left:8px"><div class="nt">${x.ts||''} · ${(x.direction||'').replace(/</g,'&lt;')} ${(x.name||'').replace(/</g,'&lt;')}</div><div class="nx">${x.hit?'✓ 命中':'✗ 未中'} · 决策价 ${x.entry} → 现 ${x.now}（<span style="color:${cnCol(x.chg_pct)}">${x.chg_pct>=0?'+':''}${x.chg_pct}%</span>）</div></div>`).join('')||'')+
+    '<p style="color:var(--sub);font-size:12px;margin-top:14px">曲线取每日收盘快照的总资产；胜率按平仓笔 FIFO 统计；决策命中率=给方向提示后价格是否如预期(有代码+参考价的记录)。数据越久越有参考价值。</p>';
   thread.style.display='none';thv.style.display='';feed.scrollTop=0;
   document.getElementById('pfBack').onclick=backToChat;}
 document.getElementById('perfLink').onclick=()=>{if(openView==='perf')return backToChat();loadPerf().then(()=>{openPerf();openView='perf';refreshViewLinks();});};
