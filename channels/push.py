@@ -1,8 +1,11 @@
-"""群机器人 webhook 推送 —— 最省事、合规的手机通知(飞书群自定义机器人 + 企业微信群机器人)。
+"""手机通知推送 —— 支持四种,配任一即生效(secrets.env),无则 no-op:
 
-secrets.env 配任一即生效,无则 no-op:
-  FEISHU_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/xxxx
-  WECHAT_WEBHOOK=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxx   # 企业微信群机器人
+个人微信(最省事,推到你自己微信):
+  SERVERCHAN_KEY=SCTxxxx          # Server酱:关注「方糖」公众号拿 SendKey
+  PUSHPLUS_TOKEN=xxxx             # PushPlus:pushplus.plus 拿 token
+群机器人(推到群):
+  FEISHU_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/xxxx     # 飞书群自定义机器人
+  WECHAT_WEBHOOK=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxx  # 企业微信群机器人
 """
 
 from __future__ import annotations
@@ -12,31 +15,51 @@ import os
 import httpx
 
 
-def _urls() -> tuple[str, str]:
-    return os.getenv("FEISHU_WEBHOOK", "").strip(), os.getenv("WECHAT_WEBHOOK", "").strip()
+def _env() -> dict:
+    return {
+        "serverchan": os.getenv("SERVERCHAN_KEY", "").strip(),
+        "pushplus": os.getenv("PUSHPLUS_TOKEN", "").strip(),
+        "feishu": os.getenv("FEISHU_WEBHOOK", "").strip(),
+        "wechat": os.getenv("WECHAT_WEBHOOK", "").strip(),
+    }
 
 
 def enabled() -> bool:
-    return any(_urls())
+    return any(_env().values())
 
 
 async def push(label: str, text: str) -> bool:
-    """推到已配置的群机器人。返回是否至少推成功一处。"""
-    fs, wx = _urls()
-    if not (fs or wx):
+    """推到所有已配置渠道。返回是否至少成功一处。"""
+    e = _env()
+    if not any(e.values()):
         return False
-    body = f"【{label}】\n{text}"[:3800]
+    title = f"【{label}】"
+    body = f"{title}\n{text}"[:3800]
     sent = False
     async with httpx.AsyncClient(timeout=15) as c:
-        if fs:
+        if e["serverchan"]:                     # Server酱 → 个人微信
             try:
-                r = await c.post(fs, json={"msg_type": "text", "content": {"text": body}})
+                r = await c.post(f"https://sctapi.ftqq.com/{e['serverchan']}.send",
+                                 data={"title": title, "desp": text[:3000]})
+                sent = (r.json().get("code", -1) == 0) or sent
+            except Exception:
+                pass
+        if e["pushplus"]:                        # PushPlus → 个人微信
+            try:
+                r = await c.post("https://www.pushplus.plus/send",
+                                 json={"token": e["pushplus"], "title": title, "content": body})
+                sent = (r.json().get("code", -1) == 200) or sent
+            except Exception:
+                pass
+        if e["feishu"]:                          # 飞书群机器人
+            try:
+                r = await c.post(e["feishu"], json={"msg_type": "text", "content": {"text": body}})
                 sent = (r.json().get("StatusCode", r.json().get("code", 0)) == 0) or sent
             except Exception:
                 pass
-        if wx:
+        if e["wechat"]:                          # 企业微信群机器人
             try:
-                r = await c.post(wx, json={"msgtype": "text", "text": {"content": body}})
+                r = await c.post(e["wechat"], json={"msgtype": "text", "text": {"content": body}})
                 sent = (r.json().get("errcode", -1) == 0) or sent
             except Exception:
                 pass
