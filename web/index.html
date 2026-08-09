@@ -114,6 +114,10 @@
   .tools .body{padding:6px 12px 10px;display:flex;flex-direction:column;gap:5px}
   .trow{font-size:12.5px;color:var(--ink);background:var(--chip);border-radius:7px;padding:5px 9px;display:flex;gap:7px;align-items:baseline}
   .trow .nm{color:#0a7ea4;font-weight:600}.trow .ar{color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .working{display:flex;align-items:center;gap:8px;margin:0 0 8px;font-size:13px;color:var(--sub)}
+  .working .wtx{opacity:.9}
+  .working .dot{width:8px;height:8px;border-radius:50%;background:var(--brand);animation:tapb 1s ease-in-out infinite}
+  @keyframes tapb{0%,100%{opacity:.25;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}
   .inputbar{border-top:1px solid var(--line);padding:14px 24px 12px}
   .disclaimer{max-width:1080px;margin:8px auto 0;font-size:11px;color:var(--sub);text-align:center}
   .inputinner{max-width:1080px;margin:0 auto;display:flex;gap:10px;align-items:flex-end;border:1px solid var(--line);border-radius:14px;padding:8px 10px 8px 14px}
@@ -640,14 +644,20 @@ function addBot(ts){const m=document.createElement('div');m.className='msg bot';
     <div class="mtime">${tlabel(ts)}</div>
     <details class="think" style="display:none"><summary>💭 <span class="think-label">思考中…</span><span class="chev">›</span></summary><div class="body"></div></details>
     <details class="tools" style="display:none"><summary>🔧 <span class="tt">工具调用</span><span class="chev">›</span></summary><div class="body"></div></details>
+    <div class="working" style="display:none"><span class="dot"></span><span class="wtx"></span></div>
     <div class="bubble cursor"></div>
     <div class="acts"><span class="act" data-a="copy">复制</span><span class="act" data-a="del">删除</span></div></div>`;
   thread.appendChild(m);scroll();
   return {think:m.querySelector('.think'),thinkBody:m.querySelector('.think .body'),thinkLabel:m.querySelector('.think-label'),
           tools:m.querySelector('.tools'),toolsBody:m.querySelector('.tools .body'),tt:m.querySelector('.tt'),
+          working:m.querySelector('.working'),wtx:m.querySelector('.working .wtx'),
           bubble:m.querySelector('.bubble')};}
 
 let curAbort=null,streamingMsg=null;
+// 工具中文友好名——让「正在…」状态看得懂,而不是一串英文函数名
+const TOOL_LABELS={sense_stock_quote:'查实时行情',sense_stock_kline:'看K线均线',sense_sector_flow:'查板块资金流',sense_market_scan:'扫板块热度',sense_market_env:'看大盘环境',read_holdings:'读持仓',read_strategy:'读交易策略',read_watchlist:'读候选池',read_plan:'读交易计划',read_alerts:'读提醒',check_constraints:'核对仓位约束',write_file:'更新后台数据',log_trade:'记成交流水',log_decision:'留痕决策',consult_hunter:'咨询机会猎手🔍',consult_risk:'咨询风控卫士🛡️',consult_ledger:'咨询仓位管家📒'};
+function toolLabel(t){return TOOL_LABELS[t]||t;}
+function _argHint(a){try{const v=(a&&(a.code||a.symbol||a.name||a.question||a.market_env));return v?String(v).slice(0,40):'';}catch(e){return '';}}
 async function send(text){
   text=(text||inp.value).trim();if(!text)return;
   thv.style.display='none';thread.style.display='';
@@ -656,6 +666,10 @@ async function send(text){
   const el=addBot();const botMsg=el.bubble.closest('.msg');
   const ac=new AbortController();curAbort=ac;streamingMsg=botMsg;botMsg.dataset.streaming='1';
   let think='',content='',hadThink=false,nTool=0,aborted=false,thinkT0=0,thinkDone=false;
+  let wTick=null,wBase='';   // 「正在…」的秒数计时器,让长耗时(尤其咨询子agent)看得到进度
+  const wStop=()=>{if(wTick){clearInterval(wTick);wTick=null;}};
+  const wStart=(lab)=>{wStop();wBase=lab;const t0=Date.now();el.wtx.textContent='正在'+lab+'…';
+    wTick=setInterval(()=>{if(content){wStop();return;}const s=Math.round((Date.now()-t0)/1000);el.wtx.textContent='正在'+wBase+'… '+s+'s';},1000);};
   const finishThink=()=>{if(hadThink&&!thinkDone){thinkDone=true;const s=Math.max(1,Math.round((Date.now()-thinkT0)/1000));el.thinkLabel.textContent=`已思考（用时 ${s} 秒）`;if(el.think.open)el.think.open=false;}};
   try{
     const resp=await authFetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:history,model:curModel(),thinking:thinkMode}),signal:ac.signal});
@@ -665,19 +679,26 @@ async function send(text){
         if(!line.startsWith('data:'))continue;let ev;try{ev=JSON.parse(line.slice(5).trim())}catch(e){continue}
         if(ev.type==='thinking'){if(!hadThink){hadThink=true;thinkT0=Date.now();el.think.style.display='';el.think.open=true}
           think+=ev.delta;el.thinkBody.textContent=think;scroll();}
-        else if(ev.type==='content'){finishThink();
+        else if(ev.type==='content'){finishThink();wStop();
+          el.working.style.display='none';el.tools.open=false;   // 出正文:收起工具面板、隐藏「正在…」
           content+=ev.delta;el.bubble.innerHTML=md(content);el.bubble.classList.add('cursor');scroll();}
         else if(ev.type==='activity'){
-          if(ev.phase==='start'){el.tools.style.display='';nTool++;el.tt.textContent=`工具调用 · ${nTool} 步`;
+          if(ev.phase==='start'){el.tools.style.display='';el.tools.open=true;nTool++;el.tt.textContent=`工具调用 · ${nTool} 步`;
+            const lab=toolLabel(ev.tool);
+            el.working.style.display='';wStart(lab);scroll();   // 显眼的实时状态+秒数,不用展开也看得到
             const r=document.createElement('div');r.className='trow';r.dataset.tool=ev.tool;
-            r.innerHTML=`<span class="st">⏳</span><span class="nm">${ev.tool}</span><span class="ar">${JSON.stringify(ev.args||{})}</span>`;
+            r.innerHTML=`<span class="st">⏳</span><span class="nm">${lab}</span><span class="ar">${_argHint(ev.args)}</span>`;
             el.toolsBody.appendChild(r);scroll();}
           else{const r=[...el.toolsBody.querySelectorAll('.trow')].reverse().find(x=>x.dataset.tool===ev.tool&&!x.dataset.done);
-            if(r){r.dataset.done=1;r.querySelector('.st').textContent='✅'}}}
+            if(r){r.dataset.done=1;r.querySelector('.st').textContent='✅'}
+            if(!content){wStop();el.wtx.textContent='整理结论中…';}}}
         else if(ev.type==='error'){content+='\n\n⚠️ '+ev.message;el.bubble.innerHTML=md(content)}
       }}
   }catch(e){if(e.name==='AbortError'){aborted=true;}else{el.bubble.textContent='请求失败：'+e}}
   botMsg.removeAttribute('data-streaming');
+  wStop();
+  if(el.working)el.working.style.display='none';
+  if(el.tools)el.tools.open=false;
   if(curAbort===ac){curAbort=null;streamingMsg=null;}
   if(aborted){botMsg.remove();rebuildNav();sendBtn.disabled=false;return;}  // 已删/中止:不入 history、不再响应
   finishThink();   // 收尾:若思考完但没正文,也定格用时
