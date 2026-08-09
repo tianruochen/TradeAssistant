@@ -256,10 +256,20 @@ class LLMClient:
 
         # 兜底:流式挂住/空流且尚未吐字 → 走非流式(实测中转非流式仍可用)。
         # 一次性拿到整段,当作 content 增量吐出,再收尾;工具调用照样进 final 供 agent 执行。
-        try:
-            msg = await self.complete(messages, tools, max_tokens=max_tokens, tool_choice=tool_choice)
-        except Exception as exc:  # noqa: BLE001
-            raise LLMError(f"流式空返回,非流式兜底也失败: {type(exc).__name__}: {exc}")
+        # 中转偶发"200却空返回"是瞬时的 → 非流式再重试几次,尽量拿到真内容,避免前端空气泡。
+        msg: dict[str, Any] = {}
+        for i in range(3):
+            try:
+                msg = await self.complete(messages, tools, max_tokens=max_tokens, tool_choice=tool_choice)
+            except Exception as exc:  # noqa: BLE001
+                if i == 2:
+                    raise LLMError(f"流式空返回,非流式兜底也失败: {type(exc).__name__}: {exc}")
+                await asyncio.sleep(_backoff(i))
+                continue
+            if (msg.get("content") or "").strip() or msg.get("tool_calls"):
+                break   # 拿到内容或工具调用即可
+            logger.warning("非流式兜底仍空返回,重试(%d/3)", i + 1)
+            await asyncio.sleep(_backoff(i))
         # 非流式正文里也可能带 <think></think>,拆一下让思考归思考
         raw = msg.get("content") or ""
         sp = _ThinkSplitter()

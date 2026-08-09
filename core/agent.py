@@ -43,17 +43,20 @@ class Agent:
     async def run_stream(self, user_messages: list[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
         messages: list[dict[str, Any]] = [{"role": "system", "content": self.system_prompt}, *user_messages]
         tools = self._tools()
+        emitted_content = False   # 整个 run 是否吐过正文(用于识别"空回答",避免前端空气泡)
         for _iter in range(self.max_iterations):
             # 首轮对子agent强制 tool_choice=required:qwen流式常丢工具/编造,强制其先查真数据
             tchoice = "required" if (_iter == 0 and self.force_first_tool and tools) else None
             final_msg: dict[str, Any] | None = None
             async for ev in self.client.stream(messages, tools, tool_choice=tchoice):
                 if ev["type"] in ("thinking", "content"):
+                    if ev["type"] == "content" and ev.get("delta"):
+                        emitted_content = True
                     yield ev
                 elif ev["type"] == "final":
                     final_msg = ev["message"]
             if final_msg is None:
-                yield {"type": "done", "message": {"role": "assistant", "content": ""}}
+                yield self._maybe_empty_done(emitted_content, {"role": "assistant", "content": ""})
                 return
 
             tool_calls = final_msg.get("tool_calls") or []
@@ -71,7 +74,7 @@ class Agent:
 
             messages.append(final_msg)
             if not tool_calls:
-                yield {"type": "done", "message": final_msg}
+                yield self._maybe_empty_done(emitted_content, final_msg)
                 return
 
             for tc in tool_calls:
@@ -107,6 +110,16 @@ class Agent:
                                  "name": tname, "content": result})
 
         yield {"type": "done", "message": {"role": "assistant", "content": "（达到最大迭代次数，未完成）"}}
+
+    @staticmethod
+    def _maybe_empty_done(emitted_content: bool, msg: dict[str, Any]) -> dict[str, Any]:
+        """收尾:若整轮没吐过正文、且最终消息正文也空(中转波动导致空返回) → 给一句明确提示,
+        绝不让前端出现空气泡。"""
+        content = (msg.get("content") or "").strip()
+        if not emitted_content and not content:
+            return {"type": "done", "message": {"role": "assistant",
+                    "content": "⚠️ 模型这次返回为空（中转服务波动），请重新发送试试。"}}
+        return {"type": "done", "message": msg}
 
     async def run(self, user_messages: list[dict[str, Any]]) -> str:
         """非流式便捷版：跑完返回最终正文（子 agent 咨询用）。"""
