@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from datetime import datetime, timedelta
@@ -17,6 +18,68 @@ from typing import Any
 
 from core.config import fx_hkd_cny
 from core.tools.registry import registry
+
+# ── klineshare.cn 行情源(主源,东财/新浪/腾讯为备选)。KLINESHARE_KEY 未配则跳过 ──
+_KS = "https://klineshare.cn/v1"
+
+
+def _ks_key() -> str:
+    return os.getenv("KLINESHARE_KEY", "").strip()
+
+
+def _ks_get(path: str, params: dict, cache_key: str, ttl: int):
+    if not _ks_key():
+        return None
+    now = time.time()
+    hit = _cache.get(cache_key)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    try:
+        import httpx
+        r = httpx.get(f"{_KS}/{path}", params=params, headers={"X-API-Key": _ks_key()}, timeout=10)
+        if r.status_code == 200:
+            j = r.json()
+            if j.get("success") is not False:
+                _cache[cache_key] = (now, j)
+                return j
+    except Exception:
+        return None
+    return None
+
+
+def _ks_quote(code: str) -> dict | None:
+    j = _ks_get("realtime", {"symbol": code}, f"ksq:{code}", 30)
+    d = (j or {}).get("data") or {}
+    if not d.get("price"):
+        return None
+    q = d.get("quote") or {}
+    try:
+        return {"name": d.get("name") or code, "code": code, "market": "A股",
+                "price": round(float(d["price"]), 3),
+                "change_pct": round(float(d.get("change_percent") or 0) * 100, 2),  # realtime 是比率
+                "open": d.get("open"), "high": d.get("high"), "low": d.get("low"),
+                "turnover_rate": round(float(q.get("turnover_ratio") or 0), 3),
+                "volume_ratio": round(float(q.get("volume_ratio") or 0), 3),
+                "amount_yi": (round(float(d.get("turnover") or q.get("turnover") or 0) / 1e8, 2) or None),
+                "source": "klineshare"}
+    except (TypeError, ValueError):
+        return None
+
+
+def _ks_kline(code: str) -> dict | None:
+    j = _ks_get("kline", {"symbol": code}, f"ksk:{code}", 600)
+    rows = (j or {}).get("data") or []
+    if len(rows) < 2:
+        return None
+    try:
+        closes = [float(r["close"]) for r in rows]
+    except (KeyError, TypeError, ValueError):
+        return None
+    def ma(n): return round(sum(closes[-n:]) / n, 3) if len(closes) >= n else None
+    recent = [{"日期": r.get("date"), "开盘": r.get("open"), "收盘": r.get("close"),
+               "最高": r.get("high"), "最低": r.get("low"), "成交量": r.get("volume", 0)} for r in rows[-10:]]
+    return {"symbol": code, "period": "daily", "last_close": closes[-1],
+            "MA5": ma(5), "MA10": ma(10), "MA20": ma(20), "MA60": ma(60), "recent10": recent}
 
 _cache: dict[str, tuple[float, Any]] = {}
 _TTL = 60
@@ -117,7 +180,7 @@ def _handle_quote(args: dict) -> str:
         return _j({"error": "symbols 不能为空"})
     fx = fx_hkd_cny()
     out = []
-    df = _a_spot()
+    df = None   # 惰性:仅当 klineshare 未命中(名称查询/失败)才拉东财快照
     for q in [s.strip() for s in raw.split(",") if s.strip()]:
         # 港股
         hk = _HK.get(q)
@@ -130,8 +193,16 @@ def _handle_quote(args: dict) -> str:
                 continue
         # A 股：6 位代码或名称
         code = q if re.fullmatch(r"\d{6}", q) else None
+        if code:                              # 主源 klineshare(6位代码)
+            ksq = _ks_quote(code)
+            if ksq:
+                out.append(ksq)
+                continue
         row = None
-        if df is not None and not df.empty:
+        if df is None:
+            _d = _a_spot()
+            df = _d if _d is not None else False   # 失败标 False,本轮不再重复拉
+        if df is not False and not df.empty:
             if code is None:
                 hit = df[df["名称"].astype(str) == q]
                 if not hit.empty:
@@ -212,10 +283,13 @@ def _a_quote_sina(code: str) -> dict | None:
 
 
 def quick_price(code: str) -> float | None:
-    """单只最新价：5 位=港股(HKD)，6 位=A股(CNY,新浪)。告警轮询用，轻量。"""
+    """单只最新价：5 位=港股(HKD)，6 位=A股。告警轮询用,轻量。优先 klineshare,回退新浪。"""
     c = str(code).strip()
     if len(c) == 5:
         return _hk_price(c)
+    ksq = _ks_quote(c)
+    if ksq:
+        return ksq["price"]
     return _a_price_sina(c)
 
 
@@ -227,6 +301,11 @@ def _handle_kline(args: dict) -> str:
         return _j({"error": "symbol 需为 6 位 A 股代码"})
     period = args.get("period") or "daily"
     count = min(int(args.get("count") or 60), 120)
+    # 主源:klineshare(日线,含MA);未配Key/失败 → 东财(akshare) → 腾讯兜底
+    if period in ("daily", "day", ""):
+        ks = _ks_kline(sym)
+        if ks:
+            return _j(_stamp(ks, "klineshare"))
     # 主源:东财(akshare);挂了 → 腾讯兜底
     try:
         import akshare as ak
