@@ -10,6 +10,7 @@ POST /api/chat/stream  body: {"messages":[{"role":"user"|"assistant","content":.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from aiohttp import web
@@ -50,8 +51,16 @@ async def chat_stream(request: web.Request) -> web.StreamResponse:
     })
     await resp.prepare(request)
 
+    client_gone = False
+
     async def send(obj: dict) -> None:
-        await resp.write(f"data: {json.dumps(obj, ensure_ascii=False)}\n\n".encode("utf-8"))
+        nonlocal client_gone
+        if client_gone:
+            return
+        try:
+            await resp.write(f"data: {json.dumps(obj, ensure_ascii=False)}\n\n".encode("utf-8"))
+        except Exception:      # 客户端断开(切页/网络中断)→ 标记,停止后续写与生成
+            client_gone = True
 
     assistant_parts: list[str] = []
     user_last = user_messages[-1]["content"] if user_messages else ""
@@ -62,24 +71,38 @@ async def chat_stream(request: web.Request) -> web.StreamResponse:
     except Exception:
         pass
     try:
-        async for ev in _agent(body.get("model")).run_stream(user_messages):
+        gen = _agent(body.get("model")).run_stream(user_messages)
+        while True:
+            try:
+                ev = await asyncio.wait_for(gen.__anext__(), timeout=15)
+            except StopAsyncIteration:
+                break
+            except asyncio.TimeoutError:
+                await send({"type": "ping"})   # 静默期(如子agent长时间工作)发心跳,防连接被中间层断开
+                if client_gone:
+                    break
+                continue
             if ev.get("type") == "content":
                 assistant_parts.append(ev.get("delta", ""))
             elif ev.get("type") == "done":
                 assistant_parts = [ev.get("message", {}).get("content") or "".join(assistant_parts)]
             await send(ev)
+            if client_gone:    # 客户端已走,别再白跑模型/工具
+                break
     except Exception as exc:  # noqa: BLE001
-        await send({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
+        if not client_gone:
+            await send({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
     finally:
-        # 先回填历史(即使写响应失败/客户端已断开,也保住本轮),再收尾
+        # 先回填历史(即使写失败/客户端已断开,也保住本轮),再收尾
         try:
             from core.history import log_turn_close
             log_turn_close("".join(assistant_parts))
         except Exception:
             pass
-        try:
-            await send({"type": "end"})
-            await resp.write_eof()
-        except Exception:
-            pass
+        if not client_gone:
+            try:
+                await send({"type": "end"})
+                await resp.write_eof()
+            except Exception:
+                pass
     return resp
