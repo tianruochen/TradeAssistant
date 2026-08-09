@@ -206,7 +206,7 @@
       <div class="krow"><span>硬约束</span><b id="chkStatus">—</b></div>
       <div class="krow"><span>现金 / 持仓</span><b id="chkCash">—</b></div>
     </div>
-    <div class="acct">👤 <span id="acctName">—</span> · <a id="chgKey">改Key</a> · <a id="logout">退出</a></div>
+    <div class="acct">👤 <span id="acctName">—</span> · <a id="setBtn">设置</a> · <a id="chgKey">改Key</a> · <a id="logout">退出</a></div>
     <div class="foot" id="modelFoot">qwen3.8-max · 流式</div>
   </aside>
   <div class="main">
@@ -228,6 +228,29 @@
       <textarea id="inp" placeholder="问 Alpha：持仓 / 机会 / 风险 / 今日行情……"></textarea>
       <button id="send">发送</button>
     </div><div class="disclaimer">⚠️ 本工具为个人决策辅助，所有分析<b>不构成投资建议</b>，交易决策与盈亏由你自负</div></div>
+  </div>
+</div>
+<div id="setOverlay" class="auth-overlay" style="display:none">
+  <div class="auth-box" style="width:470px;max-width:92vw;text-align:left">
+    <div class="auth-brand" style="font-size:17px">⚙️ 设置</div>
+    <div style="font-weight:600;margin:6px 0 4px;font-size:13px">手机通知（填你自己的，推到你微信）</div>
+    <input id="setSct" class="pos-in" style="width:100%;margin-bottom:8px" placeholder="Server酱 SendKey（SCT... 从 sct.ftqq.com 取）"/>
+    <input id="setPp" class="pos-in" style="width:100%;margin-bottom:8px" placeholder="PushPlus token（可选）"/>
+    <details style="margin-bottom:6px"><summary style="color:var(--sub);cursor:pointer;font-size:12px">群机器人（可选）</summary>
+      <input id="setFs" class="pos-in" style="width:100%;margin:8px 0" placeholder="飞书群 webhook"/>
+      <input id="setWx" class="pos-in" style="width:100%" placeholder="企业微信群 webhook"/>
+    </details>
+    <div style="font-weight:600;margin:12px 0 4px;font-size:13px">定时任务（用你的 Key 跑，推给你）</div>
+    <label style="display:block;margin:3px 0"><input type="checkbox" id="setEnabled"> 启用定时任务</label>
+    <div style="font-size:13px;color:var(--sub);margin:2px 0">
+      <label style="margin-right:10px"><input type="checkbox" id="setIntraday"> 盘中监控</label>
+      <label style="margin-right:10px"><input type="checkbox" id="setDeep"> 深度研究</label>
+      <label style="margin-right:10px"><input type="checkbox" id="setProgress"> 收盘进度</label>
+      <label><input type="checkbox" id="setWeekend"> 周末汇总</label>
+    </div>
+    <label style="display:block;margin:6px 0;font-size:13px"><input type="checkbox" id="setPushIntraday"> 盘中监控也推手机（默认关＝降噪，只在网页看）</label>
+    <button id="setSave" style="width:100%;padding:11px;margin-top:10px">保存</button>
+    <div class="auth-switch"><a id="setCancel">取消</a></div>
   </div>
 </div>
 <div id="posOverlay" class="auth-overlay" style="display:none">
@@ -683,6 +706,28 @@ document.getElementById('posSubmit').onclick=()=>{
 // 记录成交:结构化 → log_trade 记流水 + 更新持仓
 const tradeOverlay=document.getElementById('tradeOverlay');
 const _g=id=>document.getElementById(id);
+// 设置面板(用户级推送 key + 定时任务配置 + 降噪)
+const setOverlay=_g('setOverlay');
+async function openSettings(){
+  let s={};try{s=await (await authFetch('/api/settings')).json();}catch(e){}
+  const p=s.push||{},sc=s.schedule||{},nt=s.notify||{};
+  _g('setSct').value=p.serverchan||'';_g('setPp').value=p.pushplus||'';
+  _g('setFs').value=p.feishu_webhook||'';_g('setWx').value=p.wechat_webhook||'';
+  _g('setEnabled').checked=sc.enabled!==false;_g('setIntraday').checked=sc.intraday!==false;
+  _g('setDeep').checked=sc.deep!==false;_g('setProgress').checked=sc.progress!==false;_g('setWeekend').checked=sc.weekend!==false;
+  _g('setPushIntraday').checked=!!nt.push_intraday;
+  setOverlay.style.display='flex';}
+_g('setBtn').onclick=openSettings;
+_g('setCancel').onclick=()=>{setOverlay.style.display='none';};
+setOverlay.onclick=e=>{if(e.target===setOverlay)setOverlay.style.display='none';};
+_g('setSave').onclick=async()=>{
+  const body={push:{serverchan:_g('setSct').value.trim(),pushplus:_g('setPp').value.trim(),
+    feishu_webhook:_g('setFs').value.trim(),wechat_webhook:_g('setWx').value.trim()},
+    schedule:{enabled:_g('setEnabled').checked,intraday:_g('setIntraday').checked,deep:_g('setDeep').checked,
+      progress:_g('setProgress').checked,weekend:_g('setWeekend').checked},
+    notify:{push_intraday:_g('setPushIntraday').checked}};
+  try{await authFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});}catch(e){}
+  setOverlay.style.display='none';};
 _g('tradeBtn').onclick=()=>{tradeOverlay.style.display='flex';setTimeout(()=>_g('trName').focus(),50);};
 _g('trCancel').onclick=()=>{tradeOverlay.style.display='none';};
 tradeOverlay.onclick=e=>{if(e.target===tradeOverlay)tradeOverlay.style.display='none';};

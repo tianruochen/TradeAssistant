@@ -114,6 +114,16 @@ def get_user(uid: str) -> dict | None:
     return {"uid": row[0], "username": row[1], "llm_key": row[2] or "", "model": row[3] or ""}
 
 
+def all_users() -> list[dict]:
+    """所有用户(uid/llm_key/model),供定时任务按用户遍历。"""
+    c = _conn()
+    try:
+        rows = c.execute("SELECT uid,username,llm_key,model FROM users").fetchall()
+    finally:
+        c.close()
+    return [{"uid": r[0], "username": r[1], "llm_key": r[2] or "", "model": r[3] or ""} for r in rows]
+
+
 def set_user_key(uid: str, llm_key: str, model: str = "") -> None:
     c = _conn()
     c.execute("UPDATE users SET llm_key=?, model=? WHERE uid=?", (llm_key, model, uid))

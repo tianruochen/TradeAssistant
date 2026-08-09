@@ -16,12 +16,26 @@ import httpx
 
 
 def _env() -> dict:
-    return {
+    """当前用户的推送 key(优先其账户设置),缺省回退全局 env。"""
+    cfg = {
         "serverchan": os.getenv("SERVERCHAN_KEY", "").strip(),
         "pushplus": os.getenv("PUSHPLUS_TOKEN", "").strip(),
         "feishu": os.getenv("FEISHU_WEBHOOK", "").strip(),
         "wechat": os.getenv("WECHAT_WEBHOOK", "").strip(),
     }
+    try:
+        from core.tenancy import current_uid
+        from core import user_settings
+        uid = current_uid()
+        if uid:
+            p = (user_settings.load(uid) or {}).get("push") or {}
+            for k, src in (("serverchan", "serverchan"), ("pushplus", "pushplus"),
+                           ("feishu", "feishu_webhook"), ("wechat", "wechat_webhook")):
+                if (p.get(src) or "").strip():
+                    cfg[k] = p[src].strip()   # 用户级覆盖全局
+    except Exception:
+        pass
+    return cfg
 
 
 def enabled() -> bool:

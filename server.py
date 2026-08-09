@@ -185,6 +185,17 @@ async def performance_handler(_req: web.Request) -> web.Response:
     return web.json_response(performance.summary())
 
 
+async def settings_get(req: web.Request) -> web.Response:
+    from core import user_settings
+    return web.json_response(user_settings.load(req["uid"]))
+
+
+async def settings_post(req: web.Request) -> web.Response:
+    from core import user_settings
+    b = await req.json()
+    return web.json_response(user_settings.save(req["uid"], b))
+
+
 async def attribution_handler(_req: web.Request) -> web.Response:
     import asyncio
     from core import attribution
@@ -229,6 +240,8 @@ def build_app() -> web.Application:
     app.router.add_get("/api/assets", assets_handler)
     app.router.add_get("/api/health", health_scan_handler)
     app.router.add_get("/api/performance", performance_handler)
+    app.router.add_get("/api/settings", settings_get)
+    app.router.add_post("/api/settings", settings_post)
     app.router.add_get("/api/attribution", attribution_handler)
     app.router.add_get("/", index)
     app.router.add_post("/api/chat/stream", chat_stream)     # SSE 接真 agent

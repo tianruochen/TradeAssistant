@@ -49,13 +49,18 @@ _WEEKEND_JOBS = [
 ]
 
 
-async def _deliver(label: str, text: str) -> None:
-    """投递到可用通道;都没有就记日志。同时进 web 通知流。"""
+_JOB_CAT = {"盘中监控": "intraday", "深度研究": "deep", "翻倍进度": "progress", "周末汇总": "weekend"}
+
+
+async def _deliver(label: str, text: str, push_external: bool = True) -> None:
+    """网页通知流总是写;push_external=False 时不推手机(降噪,如盘中平稳)。"""
     from channels import feishu, wechat, push
     from core import notifications
     notifications.push(label, text)
+    if not push_external:
+        return
     sent = False
-    if push.enabled():                                  # 群机器人 webhook(手机通知,最省事)
+    if push.enabled():                                  # Server酱/PushPlus/群机器人(按当前用户 key)
         sent = await push.push(label, text) or sent
     chat = os.getenv("SCHEDULE_FEISHU_CHAT", "")
     if feishu.enabled() and chat:
@@ -63,64 +68,70 @@ async def _deliver(label: str, text: str) -> None:
     if wechat.enabled():
         sent = await wechat.send(f"【{label}】\n{text}") or sent
     if not sent:
-        logger.info("[定时·%s] 无可用外部通道(仅进网页),结果:\n%s", label, text[:500])
+        logger.info("[定时·%s] 无外部通道(仅进网页)", label)
 
 
-async def run_job(label: str, prompt: str) -> str:
+async def run_job(label: str, prompt: str, push_external: bool = True) -> str:
     text = await reply_to_text(prompt)
-    await _deliver(label, text)
+    await _deliver(label, text, push_external)
     return text
 
 
-JOB_TIMEOUT = 240   # 单个定时任务硬超时(秒):防止慢接口把任务拖挂,超时即跳过等下个时点
+JOB_TIMEOUT = 240   # 单个定时任务硬超时(秒)
 
 
 async def run_loop(stop: asyncio.Event) -> None:
-    fired: set[tuple[str, str]] = set()  # (date HH:MM, label)
+    fired: set = set()   # (date, hhmm, label, uid)
     while not stop.is_set():
-        from core import tenancy
-        tenancy.adopt_owner()   # 绑定业主租户:读业主持仓、写业主通知(网页可见)
         now = datetime.now()
         today = now.strftime("%Y-%m-%d")
         hhmm = now.strftime("%H:%M")
         weekday = now.weekday()
-        jobs = _JOBS if weekday < 5 else (_WEEKEND_JOBS if weekday == 5 else [])
-        if weekday < 5:   # 工作日但遇节假日休市 → 跳过交易节奏(用真实交易日历)
+        if hhmm == "00:00":
+            fired = {f for f in fired if f[0] == today}
+        base_jobs = _JOBS if weekday < 5 else (_WEEKEND_JOBS if weekday == 5 else [])
+        if weekday < 5:   # 节假日休市 → 跳过交易节奏(真实交易日历)
             try:
                 from core.tools.market_tools import is_trading_day
                 if not is_trading_day(today):
-                    jobs = []
+                    base_jobs = []
             except Exception:
                 pass
-        if jobs:
-            for label, times, prompt in jobs:
-                if hhmm in times and (f"{today} {hhmm}", label) not in fired:
-                    fired.add((f"{today} {hhmm}", label))
-                    from core.stats import auto_allowed, today_calls
-                    if not auto_allowed():
-                        logger.info("预算保护:今日调用 %d 已达自动上限,跳过定时任务 %s(额度留给用户)", today_calls(), label)
-                        continue
-                    logger.info("触发定时任务: %s @ %s", label, hhmm)
-                    try:
-                        await asyncio.wait_for(run_job(label, prompt), timeout=JOB_TIMEOUT)
-                    except asyncio.TimeoutError:
-                        logger.warning("定时任务 %s 超时(>%ds),跳过", label, JOB_TIMEOUT)
+        if base_jobs:
+            from core import users, tenancy, user_settings, notifications
+            from core.stats import auto_allowed
+            for u in users.all_users():
+                uid, key = u["uid"], u["llm_key"]
+                if not key:                       # 没填 LLM key 的用户不跑(也无从跑)
+                    continue
+                st = user_settings.load(uid)
+                if not st.get("schedule", {}).get("enabled", True):
+                    continue
+                tenancy.set_user(uid, key or None, u.get("model") or None)  # 用该用户 key/数据/推送
+                if not auto_allowed():            # 该用户当日额度(stats 按租户)
+                    continue
+                for label, times, prompt in base_jobs:
+                    cat = _JOB_CAT.get(label)
+                    if cat and not st.get("schedule", {}).get(cat, True):
+                        continue                  # 用户关了这类任务
+                    if hhmm in times and (today, hhmm, label, uid) not in fired:
+                        fired.add((today, hhmm, label, uid))
+                        push_ext = (label != "盘中监控") or st.get("notify", {}).get("push_intraday", False)
+                        logger.info("触发定时任务: %s @ %s [uid %s]", label, hhmm, uid)
                         try:
-                            from core import notifications
-                            notifications.push(label, f"⏱️ 本次「{label}」超时(>{JOB_TIMEOUT}s,多为行情接口拥堵),已跳过,下个时点重试。")
-                        except Exception:
-                            pass
-                    except Exception as exc:  # noqa: BLE001
-                        logger.warning("定时任务 %s 失败: %r", label, exc, exc_info=True)
-                        # 失败也给用户一条可见提示(否则像"没反应")
-                        try:
-                            from core import notifications
-                            notifications.push(label, f"⚠️ 本次「{label}」执行失败({type(exc).__name__}),已跳过,下个时点重试。")
-                        except Exception:
-                            pass
-        # 清理隔日的 fired
-        if hhmm == "00:00":
-            fired = {f for f in fired if f[0].startswith(today)}
+                            await asyncio.wait_for(run_job(label, prompt, push_ext), timeout=JOB_TIMEOUT)
+                        except asyncio.TimeoutError:
+                            logger.warning("定时任务 %s 超时[uid %s]", label, uid)
+                            try:
+                                notifications.push(label, f"⏱️ 本次「{label}」超时(>{JOB_TIMEOUT}s,多为行情拥堵),已跳过。")
+                            except Exception:
+                                pass
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning("定时任务 %s 失败[uid %s]: %r", label, uid, exc, exc_info=True)
+                            try:
+                                notifications.push(label, f"⚠️ 本次「{label}」执行失败({type(exc).__name__}),已跳过。")
+                            except Exception:
+                                pass
         try:
             await asyncio.wait_for(stop.wait(), timeout=30)
         except asyncio.TimeoutError:
