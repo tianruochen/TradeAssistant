@@ -22,9 +22,9 @@ import core.tools.ledger_tools  # noqa: F401
 from core.agents_factory import primary_agent
 
 
-def _agent(model: str | None = None):
+def _agent(model: str | None = None, thinking: bool | None = None):
     # 每请求按当前用户上下文(Key/数据目录)构建,不跨用户缓存
-    return primary_agent(model_override=model)
+    return primary_agent(model_override=model, thinking=thinking)
 
 
 async def chat_stream(request: web.Request) -> web.StreamResponse:
@@ -71,7 +71,7 @@ async def chat_stream(request: web.Request) -> web.StreamResponse:
     except Exception:
         pass
     try:
-        gen = _agent(body.get("model")).run_stream(user_messages)
+        gen = _agent(body.get("model"), body.get("thinking")).run_stream(user_messages)
         while True:
             try:
                 ev = await asyncio.wait_for(gen.__anext__(), timeout=15)

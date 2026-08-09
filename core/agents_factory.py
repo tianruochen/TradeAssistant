@@ -65,7 +65,8 @@ def _system_prompt(name: str, is_primary: bool) -> str:
     return "\n\n".join(parts) if parts else f"你是 {name}。"
 
 
-def build_agent(name: str, is_primary: bool = False, model_override: str | None = None) -> Agent:
+def build_agent(name: str, is_primary: bool = False, model_override: str | None = None,
+                thinking: bool | None = None) -> Agent:
     if is_primary:
         experts = config().get("agents", {}).get("experts", [])
         tools = _MARKET + _READ + ["write_file", "log_trade", "log_decision", "check_constraints", "sense_market_env"] + [f"consult_{e}" for e in experts]
@@ -74,6 +75,8 @@ def build_agent(name: str, is_primary: bool = False, model_override: str | None 
     mc = model_config(name)
     if model_override:
         mc = {**mc, "name": model_override}
+    if thinking is not None:
+        mc = {**mc, "thinking": thinking}   # 深度思考开关(仅主对话按需开,子agent不开省钱)
     return Agent(
         name=name,
         system_prompt=_system_prompt(name, is_primary),
@@ -124,7 +127,7 @@ def register_consult_tools() -> None:
         )
 
 
-def primary_agent(model_override: str | None = None) -> Agent:
+def primary_agent(model_override: str | None = None, thinking: bool | None = None) -> Agent:
     register_consult_tools()
     return build_agent(config().get("agents", {}).get("primary", "alpha"),
-                       is_primary=True, model_override=model_override)
+                       is_primary=True, model_override=model_override, thinking=thinking)

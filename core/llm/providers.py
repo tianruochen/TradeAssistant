@@ -33,6 +33,10 @@ def build_payload(
     if stream:
         # 让中转在流式结尾带上 usage
         payload["stream_options"] = {"include_usage": True}
+    # Qwen3 系:显式开启思考(reasoning_content)。仅流式;由请求的 thinking 开关控制(默认关)
+    name = str(model_cfg.get("name", "")).lower()
+    if stream and "qwen" in name and model_cfg.get("thinking") is True:
+        payload["enable_thinking"] = True
     return payload
 
 
