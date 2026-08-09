@@ -109,7 +109,8 @@
   details summary{cursor:pointer;padding:8px 13px;user-select:none;color:var(--sub);list-style:none;display:flex;align-items:center;gap:6px}
   details summary::-webkit-details-marker{display:none}
   details summary .chev{margin-left:auto;transition:.2s}details[open] summary .chev{transform:rotate(90deg)}
-  .think .body{padding:2px 13px 11px;white-space:pre-wrap;color:var(--sub);max-height:340px;overflow:auto;line-height:1.6}
+  .think .body{padding:2px 13px 11px;white-space:pre-wrap;color:var(--sub);max-height:340px;overflow:auto;line-height:1.65;font-size:12px;opacity:.8}
+  .think summary{font-size:12.5px;color:var(--sub)}
   .tools .body{padding:6px 12px 10px;display:flex;flex-direction:column;gap:5px}
   .trow{font-size:12.5px;color:var(--ink);background:var(--chip);border-radius:7px;padding:5px 9px;display:flex;gap:7px;align-items:baseline}
   .trow .nm{color:#0a7ea4;font-weight:600}.trow .ar{color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -635,12 +636,12 @@ function rebuildNav(){const rail=document.getElementById('navrail');if(!rail)ret
 function addBot(ts){const m=document.createElement('div');m.className='msg bot';
   m.innerHTML=`<div class="avatar">α</div><div class="col">
     <div class="mtime">${tlabel(ts)}</div>
-    <details class="think" style="display:none"><summary>🧠 <span>深度思考</span><span class="chev">›</span></summary><div class="body"></div></details>
+    <details class="think" style="display:none"><summary>💭 <span class="think-label">思考中…</span><span class="chev">›</span></summary><div class="body"></div></details>
     <details class="tools" style="display:none"><summary>🔧 <span class="tt">工具调用</span><span class="chev">›</span></summary><div class="body"></div></details>
     <div class="bubble cursor"></div>
     <div class="acts"><span class="act" data-a="copy">复制</span><span class="act" data-a="del">删除</span></div></div>`;
   thread.appendChild(m);scroll();
-  return {think:m.querySelector('.think'),thinkBody:m.querySelector('.think .body'),
+  return {think:m.querySelector('.think'),thinkBody:m.querySelector('.think .body'),thinkLabel:m.querySelector('.think-label'),
           tools:m.querySelector('.tools'),toolsBody:m.querySelector('.tools .body'),tt:m.querySelector('.tt'),
           bubble:m.querySelector('.bubble')};}
 
@@ -652,16 +653,17 @@ async function send(text){
   addUser(text);history.push({role:'user',content:text});
   const el=addBot();const botMsg=el.bubble.closest('.msg');
   const ac=new AbortController();curAbort=ac;streamingMsg=botMsg;botMsg.dataset.streaming='1';
-  let think='',content='',hadThink=false,nTool=0,aborted=false;
+  let think='',content='',hadThink=false,nTool=0,aborted=false,thinkT0=0,thinkDone=false;
+  const finishThink=()=>{if(hadThink&&!thinkDone){thinkDone=true;const s=Math.max(1,Math.round((Date.now()-thinkT0)/1000));el.thinkLabel.textContent=`已思考（用时 ${s} 秒）`;if(el.think.open)el.think.open=false;}};
   try{
     const resp=await authFetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:history,model:curModel()}),signal:ac.signal});
     const rd=resp.body.getReader(),dec=new TextDecoder();let buf='';
     while(true){const {done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});
       let i;while((i=buf.indexOf('\n\n'))>=0){const line=buf.slice(0,i).trim();buf=buf.slice(i+2);
         if(!line.startsWith('data:'))continue;let ev;try{ev=JSON.parse(line.slice(5).trim())}catch(e){continue}
-        if(ev.type==='thinking'){if(!hadThink){hadThink=true;el.think.style.display='';el.think.open=true}
+        if(ev.type==='thinking'){if(!hadThink){hadThink=true;thinkT0=Date.now();el.think.style.display='';el.think.open=true}
           think+=ev.delta;el.thinkBody.textContent=think;scroll();}
-        else if(ev.type==='content'){if(hadThink&&el.think.open)el.think.open=false;
+        else if(ev.type==='content'){finishThink();
           content+=ev.delta;el.bubble.innerHTML=md(content);el.bubble.classList.add('cursor');scroll();}
         else if(ev.type==='activity'){
           if(ev.phase==='start'){el.tools.style.display='';nTool++;el.tt.textContent=`工具调用 · ${nTool} 步`;
@@ -676,6 +678,7 @@ async function send(text){
   botMsg.removeAttribute('data-streaming');
   if(curAbort===ac){curAbort=null;streamingMsg=null;}
   if(aborted){botMsg.remove();rebuildNav();sendBtn.disabled=false;return;}  // 已删/中止:不入 history、不再响应
+  finishThink();   // 收尾:若思考完但没正文,也定格用时
   el.bubble.classList.remove('cursor');history.push({role:'assistant',content});
   sendBtn.disabled=false;inp.focus();pollStats();loadDays();loadLedger();loadChk();
 }
