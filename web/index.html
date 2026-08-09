@@ -175,6 +175,7 @@
       <div class="ov-row">
         <span class="ov-btn" id="holdLink">💼 持仓</span>
         <span class="ov-btn" id="watchLink">👁 候选池</span>
+        <span class="ov-btn" id="perfLink">📈 绩效</span>
       </div>
     </div>
     <div class="scard">
@@ -319,7 +320,7 @@ let openView=null;
 function refreshViewLinks(){const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=openView===v?'返回':'查看';};
   set('ledgerLink','ledger');set('chkLink','chk');
   const act=(id,v)=>{const e=document.getElementById(id);if(e)e.classList.toggle('active',openView===v);};
-  act('holdLink','holdings');act('watchLink','watchlist');}
+  act('holdLink','holdings');act('watchLink','watchlist');act('perfLink','perf');}
 function backToChat(){thv.style.display='none';thread.style.display='';feed.scrollTop=feed.scrollHeight;openView=null;refreshViewLinks();updateToBottom();}
 // 速览:纯读 holdings.md / watchlist.md,秒开不耗 LLM
 let lastAssets={};
@@ -357,6 +358,39 @@ function openGuide(){thv.innerHTML='<span class="back" id="gdBack">← 返回对
 document.getElementById('helpBtn').onclick=()=>{if(openView==='guide')return backToChat();openGuide();openView='guide';};
 document.getElementById('holdLink').onclick=()=>{if(openView==='holdings')return backToChat();loadAssets().then(()=>{openAssets('holdings');openView='holdings';refreshViewLinks();});};
 document.getElementById('watchLink').onclick=()=>{if(openView==='watchlist')return backToChat();loadAssets().then(()=>{openAssets('watchlist');openView='watchlist';refreshViewLinks();});};
+// 绩效(track record):资产曲线 + 已实现盈亏/胜率/最大回撤
+let lastPerf={};
+async function loadPerf(){try{lastPerf=await (await authFetch('/api/performance')).json();}catch(e){lastPerf={};}}
+function perfSvg(pts){if(!pts||pts.length<2)return '<p style="color:var(--sub);margin:10px 0">资产曲线需要 ≥2 天快照，先积累几天（每日收盘「翻倍进度」会自动记）。</p>';
+  const W=640,H=180,pad=10;const vs=pts.map(p=>p.total);const mn=Math.min(...vs),mx=Math.max(...vs),rng=(mx-mn)||1;
+  const X=i=>pad+i*(W-2*pad)/(pts.length-1),Y=v=>H-pad-(v-mn)/rng*(H-2*pad);
+  const d=pts.map((p,i)=>X(i).toFixed(1)+','+Y(p.total).toFixed(1)).join(' ');
+  const up=vs[vs.length-1]>=vs[0],col=up?'#e0342b':'var(--ok)';
+  const area=`${pad},${H-pad} ${d} ${(W-pad)},${H-pad}`;
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin:6px 0">
+    <polyline points="${area}" fill="${col}" opacity="0.08"/>
+    <polyline points="${d}" fill="none" stroke="${col}" stroke-width="2"/>
+    <text x="${pad}" y="14" font-size="11" fill="var(--sub)">${mx.toLocaleString()}</text>
+    <text x="${pad}" y="${H-2}" font-size="11" fill="var(--sub)">${mn.toLocaleString()}</text>
+    <text x="${W-pad}" y="${H-2}" font-size="11" fill="var(--sub)" text-anchor="end">${pts[pts.length-1].date}</text>
+  </svg>`;}
+function openPerf(){const p=lastPerf||{};const g=v=>masked?'••••':v;
+  const rc=(v,suf)=>v==null?'—':`<b style="color:${cnCol(v)}">${(v>=0?'+':'')+v}${suf||''}</b>`;
+  const stat=(k,v)=>`<div class="krow"><span>${k}</span>${v}</div>`;
+  thv.innerHTML='<span class="back" id="pfBack">← 返回对话</span><h2 style="margin:8px 0">📈 实盘绩效</h2>'+
+    perfSvg(p.points)+
+    '<div style="max-width:520px">'+
+    stat('累计收益率', rc(p.return_pct,'%'))+
+    stat('最大回撤', p.max_drawdown_pct!=null?`<b style="color:var(--ok)">-${p.max_drawdown_pct}%</b>`:'—')+
+    stat('已实现盈亏', p.realized_pnl!=null?`<b style="color:${cnCol(p.realized_pnl)}">${g((p.realized_pnl>=0?'+':'')+yuan(p.realized_pnl))}</b>`:'—')+
+    stat('交易胜率', p.win_rate!=null?`<b>${p.win_rate}% (${p.closed_trades||0}笔平仓)</b>`:'—')+
+    stat('成交笔数 / 决策留痕', `<b>${p.trade_count||0} / ${p.decision_count||0}</b>`)+
+    stat('当前总资产 / 初始本金', `<b>${p.latest!=null?g(yuan(p.latest)):'—'} / ${p.initial!=null?g(yuan(p.initial)):'—'}</b>`)+
+    '</div>'+
+    '<p style="color:var(--sub);font-size:12px;margin-top:14px">曲线取每日收盘快照的总资产；胜率按平仓笔 FIFO 统计。数据越久越有参考价值——这就是你的 track record。</p>';
+  thread.style.display='none';thv.style.display='';feed.scrollTop=0;
+  document.getElementById('pfBack').onclick=backToChat;}
+document.getElementById('perfLink').onclick=()=>{if(openView==='perf')return backToChat();loadPerf().then(()=>{openPerf();openView='perf';refreshViewLinks();});};
 document.getElementById('ledgerLink').onclick=()=>{if(openView==='ledger')return backToChat();loadLedger().then(()=>{openLedger();openView='ledger';refreshViewLinks();});};
 loadLedger();setInterval(loadLedger,20000);
 

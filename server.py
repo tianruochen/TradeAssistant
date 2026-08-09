@@ -180,6 +180,11 @@ async def health_scan_handler(_req: web.Request) -> web.Response:
     return web.json_response({"items": portfolio_health.scan()})
 
 
+async def performance_handler(_req: web.Request) -> web.Response:
+    from core import performance
+    return web.json_response(performance.summary())
+
+
 async def index(_req: web.Request) -> web.Response:
     return web.FileResponse(ROOT / "web" / "index.html")
 
@@ -217,6 +222,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/market_env", market_env_handler)
     app.router.add_get("/api/assets", assets_handler)
     app.router.add_get("/api/health", health_scan_handler)
+    app.router.add_get("/api/performance", performance_handler)
     app.router.add_get("/", index)
     app.router.add_post("/api/chat/stream", chat_stream)     # SSE 接真 agent
     app.router.add_post("/feishu/webhook", feishu.webhook)   # 飞书事件订阅(不经 auth_mw:非 /api/)

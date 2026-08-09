@@ -51,17 +51,19 @@ _WEEKEND_JOBS = [
 
 async def _deliver(label: str, text: str) -> None:
     """投递到可用通道;都没有就记日志。同时进 web 通知流。"""
-    from channels import feishu, wechat
+    from channels import feishu, wechat, push
     from core import notifications
     notifications.push(label, text)
     sent = False
+    if push.enabled():                                  # 群机器人 webhook(手机通知,最省事)
+        sent = await push.push(label, text) or sent
     chat = os.getenv("SCHEDULE_FEISHU_CHAT", "")
     if feishu.enabled() and chat:
-        sent = await feishu.send(chat, f"【{label}】\n{text}")
+        sent = await feishu.send(chat, f"【{label}】\n{text}") or sent
     if wechat.enabled():
         sent = await wechat.send(f"【{label}】\n{text}") or sent
     if not sent:
-        logger.info("[定时·%s] 无可用通道,结果记录如下:\n%s", label, text[:500])
+        logger.info("[定时·%s] 无可用外部通道(仅进网页),结果:\n%s", label, text[:500])
 
 
 async def run_job(label: str, prompt: str) -> str:
