@@ -95,9 +95,12 @@ def _make_consult_handler(expert: str):
         now = time.time()
         if hit and hit[0] > now - _CONSULT_TTL:
             return hit[1] + "\n\n(注:同轮重复咨询,返回缓存结论)"
-        agent = build_agent(expert, is_primary=False)
-        answer = await agent.run([{"role": "user", "content": question}])
-        answer = answer or "(专家无输出)"
+        try:
+            agent = build_agent(expert, is_primary=False)
+            answer = await agent.run([{"role": "user", "content": question}])
+        except Exception as exc:  # noqa: BLE001  子agent失败不拖垮主agent,给占位让其继续
+            return f"（{expert} 专家暂时不可用:{type(exc).__name__},本次跳过其意见,请基于其余信息给结论）"
+        answer = answer or f"（{expert} 无有效输出,本次跳过）"
         _CONSULT_CACHE[key] = (now, answer)
         # 顺手清理过期项,避免无界增长
         for k in [k for k, v in _CONSULT_CACHE.items() if v[0] <= now - _CONSULT_TTL]:

@@ -66,7 +66,11 @@ class Agent:
                 except json.JSONDecodeError:
                     targs = {}
                 yield {"type": "activity", "tool": tname, "phase": "start", "args": targs}
-                result = await self.registry.dispatch(tname, targs)
+                try:
+                    result = await self.registry.dispatch(tname, targs)
+                except Exception as exc:  # noqa: BLE001  工具/子agent失败不拖垮整轮,回错误串让主agent继续
+                    result = json.dumps({"error": f"{tname} 执行失败: {type(exc).__name__}: {exc}"[:200],
+                                         "result": None}, ensure_ascii=False)
                 yield {"type": "activity", "tool": tname, "phase": "end",
                        "result_preview": result[:300]}
                 messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
