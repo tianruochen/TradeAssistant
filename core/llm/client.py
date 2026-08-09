@@ -120,10 +120,12 @@ class LLMClient:
         tools: list[dict[str, Any]] | None = None,
         *,
         max_tokens: int | None = None,
+        tool_choice: str | None = None,
     ) -> dict[str, Any]:
         """阻塞式：返回 assistant message dict（content / reasoning_content / tool_calls）。"""
         stats.incr_llm_call()
-        payload = providers.build_payload(self.cfg, messages, tools, stream=False, max_tokens=max_tokens)
+        payload = providers.build_payload(self.cfg, messages, tools, stream=False,
+                                          max_tokens=max_tokens, tool_choice=tool_choice)
         async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
             for attempt in range(_MAX_TRIES):
                 async with _SEM:
@@ -142,6 +144,7 @@ class LLMClient:
         tools: list[dict[str, Any]] | None = None,
         *,
         max_tokens: int | None = None,
+        tool_choice: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """流式：yield 事件
 
@@ -152,7 +155,8 @@ class LLMClient:
         message 结构与 complete() 一致，供 agent loop 判断是否要执行工具。
         """
         stats.incr_llm_call()
-        payload = providers.build_payload(self.cfg, messages, tools, stream=True, max_tokens=max_tokens)
+        payload = providers.build_payload(self.cfg, messages, tools, stream=True,
+                                          max_tokens=max_tokens, tool_choice=tool_choice)
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
         tool_calls: dict[int, dict[str, Any]] = {}  # index -> {id,type,function:{name,arguments}}
@@ -253,7 +257,7 @@ class LLMClient:
         # 兜底:流式挂住/空流且尚未吐字 → 走非流式(实测中转非流式仍可用)。
         # 一次性拿到整段,当作 content 增量吐出,再收尾;工具调用照样进 final 供 agent 执行。
         try:
-            msg = await self.complete(messages, tools, max_tokens=max_tokens)
+            msg = await self.complete(messages, tools, max_tokens=max_tokens, tool_choice=tool_choice)
         except Exception as exc:  # noqa: BLE001
             raise LLMError(f"流式空返回,非流式兜底也失败: {type(exc).__name__}: {exc}")
         # 非流式正文里也可能带 <think></think>,拆一下让思考归思考

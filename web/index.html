@@ -114,6 +114,8 @@
   .tools .body{padding:6px 12px 10px;display:flex;flex-direction:column;gap:5px}
   .trow{font-size:12.5px;color:var(--ink);background:var(--chip);border-radius:7px;padding:5px 9px;display:flex;gap:7px;align-items:baseline}
   .trow .nm{color:#0a7ea4;font-weight:600}.trow .ar{color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .trow.sub{margin-left:16px;border-left:2px solid var(--brand);background:transparent;opacity:.92}
+  .trow.sub .nm{color:var(--sub);font-weight:500}
   .working{display:flex;align-items:center;gap:8px;margin:0 0 8px;font-size:13px;color:var(--sub)}
   .working .wtx{opacity:.9}
   .working .dot{width:8px;height:8px;border-radius:50%;background:var(--brand);animation:tapb 1s ease-in-out infinite}
@@ -656,6 +658,7 @@ function addBot(ts){const m=document.createElement('div');m.className='msg bot';
 let curAbort=null,streamingMsg=null;
 // 工具中文友好名——让「正在…」状态看得懂,而不是一串英文函数名
 const TOOL_LABELS={sense_stock_quote:'查实时行情',sense_stock_kline:'看K线均线',sense_sector_flow:'查板块资金流',sense_market_scan:'扫板块热度',sense_market_env:'看大盘环境',read_holdings:'读持仓',read_strategy:'读交易策略',read_watchlist:'读候选池',read_plan:'读交易计划',read_alerts:'读提醒',check_constraints:'核对仓位约束',write_file:'更新后台数据',log_trade:'记成交流水',log_decision:'留痕决策',consult_hunter:'咨询机会猎手🔍',consult_risk:'咨询风控卫士🛡️',consult_ledger:'咨询仓位管家📒'};
+const EXPERT_LABELS={hunter:'机会猎手🔍',risk:'风控卫士🛡️',ledger:'仓位管家📒'};
 function toolLabel(t){return TOOL_LABELS[t]||t;}
 function _argHint(a){try{const v=(a&&(a.code||a.symbol||a.name||a.question||a.market_env));return v?String(v).slice(0,40):'';}catch(e){return '';}}
 async function send(text){
@@ -683,13 +686,15 @@ async function send(text){
           el.working.style.display='none';el.tools.open=false;   // 出正文:收起工具面板、隐藏「正在…」
           content+=ev.delta;el.bubble.innerHTML=md(content);el.bubble.classList.add('cursor');scroll();}
         else if(ev.type==='activity'){
+          const viaLab=ev.via?(EXPERT_LABELS[ev.via]||ev.via):'';
+          const lab=viaLab?(viaLab+' › '+toolLabel(ev.tool)):toolLabel(ev.tool);
+          const k=(ev.via?ev.via+':':'')+ev.tool;
           if(ev.phase==='start'){el.tools.style.display='';el.tools.open=true;nTool++;el.tt.textContent=`工具调用 · ${nTool} 步`;
-            const lab=toolLabel(ev.tool);
             el.working.style.display='';wStart(lab);scroll();   // 显眼的实时状态+秒数,不用展开也看得到
-            const r=document.createElement('div');r.className='trow';r.dataset.tool=ev.tool;
+            const r=document.createElement('div');r.className='trow'+(ev.via?' sub':'');r.dataset.tk=k;
             r.innerHTML=`<span class="st">⏳</span><span class="nm">${lab}</span><span class="ar">${_argHint(ev.args)}</span>`;
             el.toolsBody.appendChild(r);scroll();}
-          else{const r=[...el.toolsBody.querySelectorAll('.trow')].reverse().find(x=>x.dataset.tool===ev.tool&&!x.dataset.done);
+          else{const r=[...el.toolsBody.querySelectorAll('.trow')].reverse().find(x=>x.dataset.tk===k&&!x.dataset.done);
             if(r){r.dataset.done=1;r.querySelector('.st').textContent='✅'}
             if(!content){wStop();el.wtx.textContent='整理结论中…';}}}
         else if(ev.type==='error'){content+='\n\n⚠️ '+ev.message;el.bubble.innerHTML=md(content)}

@@ -83,6 +83,7 @@ def build_agent(name: str, is_primary: bool = False, model_override: str | None 
         tool_names=tools,
         registry=registry,
         model_cfg=mc,
+        force_first_tool=not is_primary,   # 子agent(hunter/risk/ledger)首轮必查真数据,禁凭空作答
     )
 
 
@@ -110,6 +111,44 @@ def _make_consult_handler(expert: str):
             _CONSULT_CACHE.pop(k, None)
         return answer
     return handler
+
+
+async def consult_stream(expert: str, question: str):
+    """流式咨询专家子 agent：yield 其内部 activity 事件（带 via=expert 供前端嵌套显示），
+    结束时 yield {"type":"consult_final","content": 结论文本}。含同轮缓存 + 失败占位。"""
+    question = (question or "").strip()
+    if not question:
+        yield {"type": "consult_final", "content": '{"error":"question 不能为空"}'}
+        return
+    from core.tenancy import CURRENT_UID
+    uid = CURRENT_UID.get() or "_global"
+    key = (uid, expert, question)
+    now = time.time()
+    hit = _CONSULT_CACHE.get(key)
+    if hit and hit[0] > now - _CONSULT_TTL:
+        yield {"type": "consult_final", "content": hit[1] + "\n\n(注:同轮重复咨询,返回缓存结论)"}
+        return
+    answer = ""
+    parts: list[str] = []
+    try:
+        agent = build_agent(expert, is_primary=False)
+        async for ev in agent.run_stream([{"role": "user", "content": question}]):
+            t = ev.get("type")
+            if t == "activity":
+                yield {**ev, "via": expert}   # 透传子agent的工具活动,标注来自哪个专家
+            elif t == "content":
+                parts.append(ev.get("delta", ""))
+            elif t == "done":
+                answer = ev.get("message", {}).get("content") or "".join(parts)
+    except Exception as exc:  # noqa: BLE001  子agent失败不拖垮主agent,给占位让其继续
+        yield {"type": "consult_final",
+               "content": f"（{expert} 专家暂时不可用:{type(exc).__name__},本次跳过其意见,请基于其余信息给结论）"}
+        return
+    answer = answer or "".join(parts) or f"（{expert} 无有效输出,本次跳过）"
+    _CONSULT_CACHE[key] = (now, answer)
+    for k in [k for k, v in _CONSULT_CACHE.items() if v[0] <= now - _CONSULT_TTL]:
+        _CONSULT_CACHE.pop(k, None)
+    yield {"type": "consult_final", "content": answer}
 
 
 def register_consult_tools() -> None:

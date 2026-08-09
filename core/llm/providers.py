@@ -20,6 +20,7 @@ def build_payload(
     *,
     stream: bool = False,
     max_tokens: int | None = None,
+    tool_choice: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": model_cfg["name"],
@@ -28,6 +29,8 @@ def build_payload(
     }
     if tools:
         payload["tools"] = tools
+        if tool_choice:
+            payload["tool_choice"] = tool_choice   # "required" 强制本轮至少调一个工具(治流式丢工具/凭空编造)
     if max_tokens:
         payload["max_tokens"] = max_tokens
     if stream:
