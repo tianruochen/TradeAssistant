@@ -72,24 +72,42 @@ async def chat_stream(request: web.Request) -> web.StreamResponse:
         pass
     try:
         gen = _agent(body.get("model"), body.get("thinking")).run_stream(user_messages)
-        await send({"type": "ping"})   # 立刻发一帧,让连接尽早有数据(慢中转首个事件可能十几秒后才来)
-        while True:
+        await send({"type": "ping"})   # 立刻发一帧,让连接尽早有数据
+        # 关键:用独立 pump 任务消费生成器,主循环只对「队列」做 wait_for 超时心跳。
+        # 绝不能对 gen.__anext__() 做 wait_for——超时会取消它、损坏异步生成器(慢中转必现空返回)。
+        q: asyncio.Queue = asyncio.Queue()
+
+        async def _pump():
             try:
-                ev = await asyncio.wait_for(gen.__anext__(), timeout=5)
-            except StopAsyncIteration:
-                break
-            except asyncio.TimeoutError:
-                await send({"type": "ping"})   # 每 5s 心跳,防慢中转静默期被中间层/浏览器断连
-                if client_gone:
+                async for ev in gen:
+                    await q.put(ev)
+            except Exception as exc:  # noqa: BLE001
+                await q.put({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
+            finally:
+                await q.put(None)   # 结束哨兵
+
+        pump = asyncio.create_task(_pump())
+        try:
+            while True:
+                try:
+                    ev = await asyncio.wait_for(q.get(), timeout=5)
+                except asyncio.TimeoutError:
+                    await send({"type": "ping"})   # 每 5s 心跳(不碰生成器),撑过慢中转静默期
+                    if client_gone:
+                        break
+                    continue
+                if ev is None:      # 生成器正常结束
                     break
-                continue
-            if ev.get("type") == "content":
-                assistant_parts.append(ev.get("delta", ""))
-            elif ev.get("type") == "done":
-                assistant_parts = [ev.get("message", {}).get("content") or "".join(assistant_parts)]
-            await send(ev)
-            if client_gone:    # 客户端已走,别再白跑模型/工具
-                break
+                if ev.get("type") == "content":
+                    assistant_parts.append(ev.get("delta", ""))
+                elif ev.get("type") == "done":
+                    assistant_parts = [ev.get("message", {}).get("content") or "".join(assistant_parts)]
+                await send(ev)
+                if client_gone:    # 客户端已走 → 取消 pump(释放并发槽/停止空跑模型)
+                    break
+        finally:
+            if not pump.done():
+                pump.cancel()
     except Exception as exc:  # noqa: BLE001
         if not client_gone:
             await send({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
