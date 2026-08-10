@@ -197,6 +197,10 @@
         <span class="ov-btn" id="watchLink">👁 候选</span>
         <span class="ov-btn" id="perfLink">📈 绩效</span>
       </div>
+      <div class="ov-row" style="margin-top:8px">
+        <span class="ov-btn" id="stratLink">📋 策略</span>
+        <span class="ov-btn" id="cronLink">⏰ 定时任务</span>
+      </div>
     </div>
     <div class="scard">
       <h3>历史回顾</h3>
@@ -364,7 +368,7 @@ let openView=null;
 function refreshViewLinks(){const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=openView===v?'返回':'查看';};
   set('ledgerLink','ledger');set('chkLink','chk');
   const act=(id,v)=>{const e=document.getElementById(id);if(e)e.classList.toggle('active',openView===v);};
-  act('holdLink','holdings');act('watchLink','watchlist');act('perfLink','perf');}
+  act('holdLink','holdings');act('watchLink','watchlist');act('perfLink','perf');act('stratLink','strategy');act('cronLink','cron');}
 function backToChat(){thv.style.display='none';thread.style.display='';feed.scrollTop=feed.scrollHeight;openView=null;refreshViewLinks();updateToBottom();}
 // 速览:纯读 holdings.md / watchlist.md,秒开不耗 LLM
 let lastAssets={};
@@ -375,6 +379,64 @@ function openAssets(which){const body=which==='holdings'?lastAssets.holdings:las
     `<div class="bubble" style="display:block;max-width:none">${md(body||'（暂无内容）')}</div>`;
   thread.style.display='none';thv.style.display='';feed.scrollTop=0;
   document.getElementById('asBack').onclick=backToChat;}
+// 策略:读/写 交易策略.md(保存后 Alpha 立即按新策略执行)
+const _SVBTN='padding:7px 16px;background:var(--brand);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px';
+async function openStrategy(){
+  let text='';try{text=(await(await authFetch('/api/strategy')).json()).text||''}catch(e){}
+  thv.innerHTML=`<span class="back" id="stBack">← 返回对话</span>
+    <h2 style="margin:8px 0">📋 交易策略 <span style="font-size:12px;font-weight:400;color:var(--sub)">（可编辑，保存后 Alpha 立即按新策略执行）</span></h2>
+    <textarea id="stratText" style="width:100%;box-sizing:border-box;height:58vh;font-family:inherit;font-size:13px;line-height:1.65;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink)"></textarea>
+    <div style="margin-top:10px"><button id="stratSave" style="${_SVBTN}">保存策略</button> <span id="stratMsg" style="color:var(--sub);font-size:12px;margin-left:8px"></span></div>`;
+  thread.style.display='none';thv.style.display='';feed.scrollTop=0;
+  _g('stratText').value=text;_g('stBack').onclick=backToChat;
+  _g('stratSave').onclick=async()=>{_g('stratMsg').textContent='保存中…';
+    try{await authFetch('/api/strategy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:_g('stratText').value})});_g('stratMsg').textContent='✅ 已保存，Alpha 下次决策即按新策略';}
+    catch(e){_g('stratMsg').textContent='❌ 保存失败';}};
+}
+// 定时任务:内置任务开关 + 自定义任务增删改(存 /api/settings)
+let schedCache={};
+async function openSchedule(){
+  try{schedCache=await(await authFetch('/api/settings')).json()}catch(e){schedCache={}}
+  renderSchedule();thread.style.display='none';thv.style.display='';feed.scrollTop=0;
+}
+function _collectSched(){
+  schedCache.schedule=schedCache.schedule||{};
+  thv.querySelectorAll('[data-sk]').forEach(e=>schedCache.schedule[e.dataset.sk]=e.checked);
+  const jobs=schedCache.custom_jobs||[];
+  thv.querySelectorAll('[data-j]').forEach(e=>{const i=+e.dataset.j,f=e.dataset.f;if(!jobs[i])return;jobs[i][f]=e.type==='checkbox'?e.checked:e.value;});
+  schedCache.custom_jobs=jobs;
+}
+function renderSchedule(){
+  const sc=schedCache.schedule||{},jobs=schedCache.custom_jobs||[];
+  const esc=s=>(s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  const chk=(k,l,d)=>`<label style="display:flex;align-items:center;gap:8px;padding:6px 0"><input type="checkbox" data-sk="${k}" ${sc[k]!==false?'checked':''}> <b>${l}</b> <span style="color:var(--sub);font-size:12px">${d}</span></label>`;
+  const rows=jobs.map((j,i)=>`<div class="scard" style="margin:8px 0;padding:10px">
+    <div style="display:flex;gap:8px;align-items:center">
+      <input data-j="${i}" data-f="enabled" type="checkbox" ${j.enabled!==false?'checked':''} title="启用">
+      <input data-j="${i}" data-f="name" value="${esc(j.name)}" placeholder="任务名" style="flex:1;padding:5px 8px;background:var(--bg);border:1px solid var(--line);border-radius:7px;color:var(--ink)">
+      <input data-j="${i}" data-f="time" value="${esc(j.time)}" placeholder="HH:MM" style="width:74px;padding:5px 8px;background:var(--bg);border:1px solid var(--line);border-radius:7px;color:var(--ink)">
+      <span data-del="${i}" style="cursor:pointer;color:#ef4444;font-size:12px">删除</span>
+    </div>
+    <textarea data-j="${i}" data-f="prompt" placeholder="要 Alpha 做什么，如：盘前扫描半导体板块异动并提醒我关注点" style="width:100%;box-sizing:border-box;margin-top:6px;height:52px;padding:6px 8px;background:var(--bg);border:1px solid var(--line);border-radius:7px;color:var(--ink);font-size:12px">${esc(j.prompt)}</textarea>
+  </div>`).join('');
+  thv.innerHTML=`<span class="back" id="scBack">← 返回对话</span>
+    <h2 style="margin:8px 0">⏰ 定时任务</h2>
+    <label style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)"><input type="checkbox" data-sk="enabled" ${sc.enabled!==false?'checked':''}> <b>总开关</b> <span style="color:var(--sub);font-size:12px">关掉则所有定时任务都不跑</span></label>
+    <h3 style="margin:14px 0 4px">内置任务</h3>
+    ${chk('intraday','盘中监控','交易日 9:35–14:35 每半小时，异动/触发止损才播报')}
+    ${chk('deep','深度研究','交易日 11:15 / 13:15 挖热门板块候选')}
+    ${chk('progress','翻倍进度','交易日 16:05 收盘算进度')}
+    ${chk('weekend','周末汇总','周六 10:00 复盘 + 下周计划')}
+    <h3 style="margin:16px 0 4px">自定义任务 <span id="addJob" style="float:right;font-size:12px;color:var(--brand);cursor:pointer">＋ 新增</span></h3>
+    <div>${rows||'<p style="color:var(--sub);font-size:12px">暂无自定义任务，点右上「＋ 新增」</p>'}</div>
+    <div style="margin-top:14px"><button id="schedSave" style="${_SVBTN}">保存</button> <span id="schedMsg" style="color:var(--sub);font-size:12px;margin-left:8px"></span></div>`;
+  _g('scBack').onclick=backToChat;
+  _g('addJob').onclick=()=>{_collectSched();(schedCache.custom_jobs=schedCache.custom_jobs||[]).push({id:'j'+Date.now(),name:'新任务',time:'09:00',prompt:'',enabled:true,push:true});renderSchedule();};
+  thv.querySelectorAll('[data-del]').forEach(e=>e.onclick=()=>{_collectSched();schedCache.custom_jobs.splice(+e.dataset.del,1);renderSchedule();});
+  _g('schedSave').onclick=async()=>{_collectSched();_g('schedMsg').textContent='保存中…';
+    try{await authFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({schedule:schedCache.schedule,custom_jobs:schedCache.custom_jobs})});_g('schedMsg').textContent='✅ 已保存';}
+    catch(e){_g('schedMsg').textContent='❌ 保存失败';}};
+}
 // 使用指南(静态,右上角❓,首次登录自动弹一次)
 const GUIDE=`# 👋 欢迎使用 TradeAssistant
 你的私人 A 股交易**决策助手** —— 分析仅供参考，**不构成投资建议**，决策盈亏自负。
@@ -408,6 +470,8 @@ _bg.onclick=()=>toggleDrawer(false);
 _side.addEventListener('click',e=>{if(e.target.closest('.ov-btn,.quick span,a,.cal-grid .d.has'))toggleDrawer(false);});
 document.getElementById('holdLink').onclick=()=>{if(openView==='holdings')return backToChat();loadAssets().then(()=>{openAssets('holdings');openView='holdings';refreshViewLinks();});};
 document.getElementById('watchLink').onclick=()=>{if(openView==='watchlist')return backToChat();loadAssets().then(()=>{openAssets('watchlist');openView='watchlist';refreshViewLinks();});};
+document.getElementById('stratLink').onclick=()=>{if(openView==='strategy')return backToChat();openStrategy();openView='strategy';refreshViewLinks();};
+document.getElementById('cronLink').onclick=()=>{if(openView==='cron')return backToChat();openSchedule();openView='cron';refreshViewLinks();};
 // 绩效(track record):资产曲线 + 已实现盈亏/胜率/最大回撤
 let lastPerf={},lastAttr={};
 async function loadPerf(){try{const [p,a]=await Promise.all([

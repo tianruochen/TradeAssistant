@@ -132,6 +132,41 @@ async def run_loop(stop: asyncio.Event) -> None:
                                 notifications.push(label, f"⚠️ 本次「{label}」执行失败({type(exc).__name__}),已跳过。")
                             except Exception:
                                 pass
+        # 用户自建定时任务(任意日触发,不受交易日门限;各用户自己的 key/数据/推送)
+        try:
+            from core import users, tenancy, user_settings, notifications
+            from core.stats import auto_allowed
+            for u in users.all_users():
+                uid, key = u["uid"], u["llm_key"]
+                if not key:
+                    continue
+                st = user_settings.load(uid)
+                if not st.get("schedule", {}).get("enabled", True):
+                    continue
+                for j in (st.get("custom_jobs") or []):
+                    if not j.get("enabled", True) or j.get("time") != hhmm:
+                        continue
+                    jid = str(j.get("id") or j.get("name") or hhmm)
+                    fk = (today, hhmm, "custom:" + jid, uid)
+                    if fk in fired:
+                        continue
+                    fired.add(fk)
+                    tenancy.set_user(uid, key or None, u.get("model") or None)
+                    if not auto_allowed():
+                        continue
+                    label = j.get("name") or "自定义任务"
+                    prompt = (j.get("prompt") or "").strip()
+                    if not prompt:
+                        continue
+                    logger.info("触发自定义任务: %s @ %s [uid %s]", label, hhmm, uid)
+                    try:
+                        await asyncio.wait_for(run_job(label, prompt, bool(j.get("push", True))), timeout=JOB_TIMEOUT)
+                    except asyncio.TimeoutError:
+                        notifications.push(label, f"⏱️ 自定义任务「{label}」超时,已跳过。")
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("自定义任务 %s 失败[uid %s]: %r", label, uid, exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("自定义任务循环异常: %r", exc)
         try:
             await asyncio.wait_for(stop.wait(), timeout=30)
         except asyncio.TimeoutError:

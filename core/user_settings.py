@@ -17,6 +17,7 @@ DEFAULTS = {
     "push": {"serverchan": "", "pushplus": "", "feishu_webhook": "", "wechat_webhook": ""},
     "schedule": {"enabled": True, "intraday": True, "deep": True, "progress": True, "weekend": True},
     "notify": {"push_intraday": False},   # 盘中监控是否推手机(默认否=降噪);其余重要项一律推
+    "custom_jobs": [],   # 用户自建定时任务:[{id,name,time:"HH:MM",prompt,enabled,push}]
 }
 
 

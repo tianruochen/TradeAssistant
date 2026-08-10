@@ -206,6 +206,24 @@ async def settings_post(req: web.Request) -> web.Response:
     return web.json_response(user_settings.save(req["uid"], b))
 
 
+async def strategy_get(_req: web.Request) -> web.Response:
+    from core.config import data_dir
+    p = data_dir() / "交易策略.md"
+    return web.json_response({"text": p.read_text(encoding="utf-8") if p.exists() else ""})
+
+
+async def strategy_post(req: web.Request) -> web.Response:
+    from core.config import data_dir
+    b = await req.json()
+    text = str(b.get("text") or "")
+    p = data_dir() / "交易策略.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".md.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(p)   # 原子写
+    return web.json_response({"ok": True, "bytes": len(text)})
+
+
 async def attribution_handler(_req: web.Request) -> web.Response:
     import asyncio
     from core import attribution
@@ -252,6 +270,8 @@ def build_app() -> web.Application:
     app.router.add_get("/api/performance", performance_handler)
     app.router.add_get("/api/settings", settings_get)
     app.router.add_post("/api/settings", settings_post)
+    app.router.add_get("/api/strategy", strategy_get)
+    app.router.add_post("/api/strategy", strategy_post)
     app.router.add_get("/api/attribution", attribution_handler)
     app.router.add_get("/", index)
     app.router.add_post("/api/chat/stream", chat_stream)     # SSE 接真 agent
