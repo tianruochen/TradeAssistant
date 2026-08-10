@@ -24,6 +24,16 @@ logger = logging.getLogger("tradeagent.llm")
 # 中转常见 429「令牌并发过多」+ 瞬时 5xx → 退避重试(并发/拥堵多为短暂)
 _RETRY_CODES = {429, 500, 502, 503, 504}
 _MAX_TRIES = 7
+
+
+def _retryable(status: int, body: str = "") -> bool:
+    """可重试:标准 5xx/429,以及中转偶发把有效请求误转成上游 400
+    (如误报 tools 的 function.name 缺失)——重试多能路由到正常上游。"""
+    if status in _RETRY_CODES:
+        return True
+    if status == 400 and ("Upstream request failed" in body or "validation error" in body):
+        return True
+    return False
 # 全局并发闸:同一 Key 并发过多正是 429 主因,限流从源头减少触发(定时任务+用户+子agent同抢)
 _SEM = asyncio.Semaphore(2)
 
@@ -132,7 +142,7 @@ class LLMClient:
                     r = await c.post(self.url, headers=self.headers, json=payload)
                 if r.status_code == 200:
                     return r.json()["choices"][0]["message"]
-                if r.status_code in _RETRY_CODES and attempt < _MAX_TRIES - 1:
+                if _retryable(r.status_code, r.text) and attempt < _MAX_TRIES - 1:
                     logger.warning("LLM %d 重试(%d/%d)", r.status_code, attempt + 1, _MAX_TRIES)
                     await asyncio.sleep(_backoff(attempt))
                     continue
@@ -182,7 +192,7 @@ class LLMClient:
                         async with c.stream("POST", self.url, headers=self.headers, json=payload) as r:
                             if r.status_code != 200:
                                 body = (await r.aread()).decode("utf-8", "ignore")
-                                if r.status_code in _RETRY_CODES and attempt < _MAX_TRIES - 1:
+                                if _retryable(r.status_code, body) and attempt < _MAX_TRIES - 1:
                                     logger.warning("LLM流 %d 重试(%d/%d)", r.status_code, attempt + 1, _MAX_TRIES)
                                     await asyncio.sleep(_backoff(attempt))
                                     continue   # 尚未 yield 任何增量,重试不会重复
