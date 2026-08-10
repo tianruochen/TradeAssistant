@@ -2,11 +2,11 @@
 # 主 + 子 agent 共享的默认模型；单个 agent 可在其 agents/<name>/agent.yaml 覆盖。
 
 model:
-  provider: qwen           # 适配器按模型名自动选
-  name: qwen3.8-max        # 主 agent(Alpha)：本中转下唯一稳定交付的强模型(deepseek-v4-pro分析更好但常吐不出最终答案、卡住)
-  sub_agent: qwen3.7-plus  # 专家子 agent：可靠、工具调用稳、快
-  base_url: https://llm.xinlicloud.top/v1
-  # api_key 从 secrets.env 的 LLM_API_KEY 读
+  provider: deepseek       # 适配器按模型名自动选
+  name: deepseek-v4-flash  # 主 agent(Alpha)：新中转实测——质量好/快/稳/真思考,老中转的空返回·丢工具·交付不出全解决
+  sub_agent: deepseek-v4-flash  # 专家子 agent:同款,快且可靠
+  base_url: http://124.220.67.137:3000/v1
+  # api_key 从 secrets.env 的 LLM_API_KEY 读；用户级 key 存 users.db
 
 server:
   host: 0.0.0.0
