@@ -84,7 +84,7 @@ def build_agent(name: str, is_primary: bool = False, model_override: str | None 
         tool_names=tools,
         registry=registry,
         model_cfg=mc,
-        force_first_tool=bool(tools),   # 首轮强制调工具:主/子都要先取真数据再答(deepseek等流式常丢工具,强制grounding)
+        force_first_tool=False,   # 新中转(思考模型)不丢工具且不支持tool_choice=required(会400);靠模型自主调工具+RULES+verify兜底
     )
 
 
