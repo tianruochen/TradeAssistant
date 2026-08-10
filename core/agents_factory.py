@@ -84,7 +84,7 @@ def build_agent(name: str, is_primary: bool = False, model_override: str | None 
         tool_names=tools,
         registry=registry,
         model_cfg=mc,
-        force_first_tool=not is_primary,   # 子agent(hunter/risk/ledger)首轮必查真数据,禁凭空作答
+        force_first_tool=bool(tools),   # 首轮强制调工具:主/子都要先取真数据再答(deepseek等流式常丢工具,强制grounding)
     )
 
 
