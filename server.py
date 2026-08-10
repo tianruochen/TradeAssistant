@@ -231,7 +231,9 @@ async def attribution_handler(_req: web.Request) -> web.Response:
 
 
 async def index(_req: web.Request) -> web.Response:
-    return web.FileResponse(ROOT / "web" / "index.html")
+    resp = web.FileResponse(ROOT / "web" / "index.html")
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"   # 前端更新即时生效,免手动清缓存
+    return resp
 
 
 async def _on_startup(app: web.Application) -> None:
