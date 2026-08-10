@@ -72,6 +72,10 @@ class Agent:
                     final_msg = verify   # 用可靠的非流式结果(含 tool_calls)接着跑;已流式的开场白留作前缀
                     tool_calls = verify.get("tool_calls") or []
 
+            # 思考模型(新中转)要求:带 tool_calls 的 assistant 轮必须回传 reasoning_content,
+            # 多轮链里某轮缺失会 400。缺了就补个占位,保证协议一致。
+            if tool_calls and not str(final_msg.get("reasoning_content") or "").strip():
+                final_msg = {**final_msg, "reasoning_content": "（本轮思考略）"}
             messages.append(final_msg)
             if not tool_calls:
                 yield self._maybe_empty_done(emitted_content, final_msg)
