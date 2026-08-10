@@ -72,13 +72,14 @@ async def chat_stream(request: web.Request) -> web.StreamResponse:
         pass
     try:
         gen = _agent(body.get("model"), body.get("thinking")).run_stream(user_messages)
+        await send({"type": "ping"})   # 立刻发一帧,让连接尽早有数据(慢中转首个事件可能十几秒后才来)
         while True:
             try:
-                ev = await asyncio.wait_for(gen.__anext__(), timeout=15)
+                ev = await asyncio.wait_for(gen.__anext__(), timeout=5)
             except StopAsyncIteration:
                 break
             except asyncio.TimeoutError:
-                await send({"type": "ping"})   # 静默期(如子agent长时间工作)发心跳,防连接被中间层断开
+                await send({"type": "ping"})   # 每 5s 心跳,防慢中转静默期被中间层/浏览器断连
                 if client_gone:
                     break
                 continue
