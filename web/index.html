@@ -748,6 +748,7 @@ async function send(text){
   const wStart=(lab)=>{wStop();wBase=lab;const t0=Date.now();el.wtx.textContent='正在'+lab+'…';
     wTick=setInterval(()=>{if(content){wStop();return;}const s=Math.round((Date.now()-t0)/1000);el.wtx.textContent='正在'+wBase+'… '+s+'s';},1000);};
   const finishThink=()=>{if(hadThink&&!thinkDone){thinkDone=true;const s=Math.max(1,Math.round((Date.now()-thinkT0)/1000));el.thinkLabel.textContent=`已思考（用时 ${s} 秒）`;if(el.think.open)el.think.open=false;}};
+  el.working.style.display='';wStart('思考');   // 立刻显示进度,慢中转下也不像死了
   try{
     const resp=await authFetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:history,model:curModel(),thinking:thinkMode}),signal:ac.signal});
     const rd=resp.body.getReader(),dec=new TextDecoder();let buf='';
