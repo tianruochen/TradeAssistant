@@ -66,28 +66,30 @@ def compute(live: bool = True) -> dict:
     rows = _parse_rows()
     positions = []
     total_mv = 0.0
-    quick_price = None
+    ks_quote = None
     if live:
         try:
-            from core.tools.market_tools import quick_price as _qp
-            quick_price = _qp
+            from core.tools.market_tools import _ks_quote as _kq   # 只用 klineshare(快),不碰慢的新浪兜底
+            ks_quote = _kq
         except Exception:  # noqa: BLE001
-            quick_price = None
+            ks_quote = None
     for r in rows:
         sh = r["shares"] or 0.0
         cost = r["cost"] or 0.0
         px_cny = None
         src = "stored"
         code = (r["code"] or "").strip()
-        if quick_price and code and code not in ("—", "-", ""):
+        # 只对 6 位 A 股走 klineshare 实时(快,~150ms);ETF/港股 klineshare 不支持→快速失败→用快照价。
+        # 关键:绝不在这里走新浪兜底(服务器被 403,每只卡~5秒,13只就是分钟级,曾导致"持仓分析"卡死)。
+        if ks_quote and len(code) == 6 and code.isdigit():
             try:
-                lp = quick_price(code)
+                q = ks_quote(code)
             except Exception:  # noqa: BLE001
-                lp = None
-            if lp:
-                px_cny = lp * fx if r["is_hk"] else lp
+                q = None
+            if q and q.get("price"):
+                px_cny = q["price"] * fx if r["is_hk"] else q["price"]
                 src = "live"
-        if px_cny is None and r["px_col"]:   # 回退表格现价列
+        if px_cny is None and r["px_col"]:   # 回退表格现价列(港股/ETF/无代码/取价失败)
             px_cny = r["px_col"] * fx if r["is_hk"] else r["px_col"]
             src = "px_col"
         cost_cny = cost * fx if r["is_hk"] else cost
