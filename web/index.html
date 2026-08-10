@@ -525,10 +525,9 @@ modelSel.onchange=()=>localStorage.setItem('ta_model',modelSel.value);
 function applyTheme(t){document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'');document.getElementById('themeBtn').textContent=t==='dark'?'☀️':'🌙';}
 let theme=localStorage.getItem('ta_theme')||'light';applyTheme(theme);
 document.getElementById('themeBtn').onclick=()=>{theme=theme==='dark'?'light':'dark';localStorage.setItem('ta_theme',theme);applyTheme(theme);};
-// ＋新对话:存边界时间戳→清空当前对话(历史仍在左侧日历),新消息从这里重新计
+// ＋新对话:清空当前聊天视图,从头开始(本次会话内清爽;今天的历史仍在左侧日历,刷新可找回)
 document.getElementById('newChatBtn').onclick=()=>{
   if(sendBtn.disabled){return;}   // 流式中不打断
-  localStorage.setItem('ta_convo_start',Date.now());
   injectedTs=Date.now();localStorage.setItem('ta_notif_injected',injectedTs);
   thread.innerHTML='';history=[];openView=null;
   thv.style.display='none';thread.style.display='';
@@ -618,20 +617,13 @@ async function openDay(date){
   document.getElementById('histBack').onclick=()=>{backToChat();};
 }
 
-// 刷新不丢:登录后把「本次对话开始后」已持久化的对话重新渲染进聊天窗
-// 会话边界 ta_convo_start:跨天自动重置为当天0点(每天自动开新对话);点「＋新对话」则置为当下
-function convoStart(){
-  let s=+localStorage.getItem('ta_convo_start')||0;
-  const t=new Date();t.setHours(0,0,0,0);
-  if(s<t.getTime()){s=t.getTime();localStorage.setItem('ta_convo_start',s);}  // 跨天→自动开新对话
-  return s;
-}
+// 刷新不丢:登录后把「今天」已持久化的对话重新渲染进聊天窗(服务端 conversations/<今日>.jsonl)。
+// 按天边界:只加载当天(跨天自动是新对话,不会把昨天拖进来)。同一天刷新→今天消息全部找回。
 async function restoreToday(){
   const n=new Date();
   const today=`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
   let d;try{d=await(await authFetch('/api/history/'+today)).json()}catch(e){return}
-  const start=convoStart();
-  const convs=(d.conversations||[]).filter(c=>nts(c.ts)>=start);if(!convs.length)return;
+  const convs=d.conversations||[];if(!convs.length)return;
   thread.innerHTML='';history=[];
   convs.forEach(c=>{
     if(c.user){addUser(c.user,c.ts);history.push({role:'user',content:c.user});}
