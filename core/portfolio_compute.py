@@ -16,10 +16,11 @@ _TTL = 60.0   # 实时价缓存 60s,避免侧栏频繁轮询打爆数据源
 
 
 def _fx() -> float:
+    from core.config import fx_hkd_cny
     try:
-        return float(config().get("fx_hkd_cny", 0.91) or 0.91)
+        return float(fx_hkd_cny())
     except (TypeError, ValueError):
-        return 0.91
+        return 0.86
 
 
 def _f(s) -> float | None:
@@ -99,7 +100,9 @@ def compute(live: bool = True) -> dict:
         else:
             mv = 0.0
         pnl = (mv - sh * cost_cny) if px_cny is not None else None
-        pnl_pct = round(pnl / (sh * cost_cny) * 100, 2) if (pnl is not None and sh * cost_cny) else None
+        # 负成本(日内T摊薄成负)时百分比无意义 → 不给%,只给金额
+        pnl_pct = (round(pnl / (sh * cost_cny) * 100, 2)
+                   if (pnl is not None and sh * cost_cny > 0) else None)
         total_mv += mv
         positions.append({
             "name": r["name"], "code": code, "shares": sh,
