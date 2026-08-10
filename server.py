@@ -84,12 +84,22 @@ async def health(_req: web.Request) -> web.Response:
 
 
 async def stats_handler(_req: web.Request) -> web.Response:
+    import asyncio
     from core.stats import stats
-    from core.portfolio import summary
     data = stats()
-    data["portfolio"] = summary()
+    data["portfolio"] = await asyncio.to_thread(_portfolio_snapshot)
     data["model"] = (config().get("model") or {}).get("name", "")
     return web.json_response(data)
+
+
+def _portfolio_snapshot() -> dict:
+    """组合摘要给侧栏 OKR:优先代码现算(60s缓存),失败回退手打摘要。"""
+    try:
+        from core import portfolio_compute
+        return portfolio_compute.compute(live=True)
+    except Exception:  # noqa: BLE001
+        from core.portfolio import summary
+        return summary()
 
 
 _MODELS_CACHE: dict = {}

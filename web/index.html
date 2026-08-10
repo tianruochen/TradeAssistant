@@ -218,7 +218,7 @@
     <div class="foot" id="modelFoot">qwen3.8-max · 流式</div>
   </aside>
   <div class="main">
-    <div class="topbar"><span id="menuBtn" title="菜单" style="cursor:pointer;font-size:19px;display:none;margin-right:4px">☰</span><span class="tb-title">Alpha · 决策中心</span><span class="tb-right"><span class="callpill" id="callsTop">⚡ 0 / 1000</span><span id="bell" title="通知" style="cursor:pointer;position:relative;font-size:16px">🔔<span id="bellBadge" class="badge" style="display:none"></span></span><select id="modelSel" title="选择模型"></select><select id="fontSel" title="对话字号"><option value="13.5">小</option><option value="15">中</option><option value="17">大</option><option value="19">特大</option></select><span id="helpBtn" title="使用指南" style="cursor:pointer;font-size:15px">❓</span><span id="themeBtn" title="暗色/亮色（防窥屏）" style="cursor:pointer">🌙</span></span></div>
+    <div class="topbar"><span id="menuBtn" title="菜单" style="cursor:pointer;font-size:19px;display:none;margin-right:4px">☰</span><span class="tb-title">Alpha · 决策中心</span><span class="tb-right"><span id="newChatBtn" title="开启新对话（当前对话已存入历史，可在左侧日历回看）" style="cursor:pointer;font-size:13px;border:1px solid var(--line);border-radius:8px;padding:3px 9px">＋ 新对话</span><span class="callpill" id="callsTop">⚡ 0 / 1000</span><span id="bell" title="通知" style="cursor:pointer;position:relative;font-size:16px">🔔<span id="bellBadge" class="badge" style="display:none"></span></span><select id="modelSel" title="选择模型"></select><select id="fontSel" title="对话字号"><option value="13.5">小</option><option value="15">中</option><option value="17">大</option><option value="19">特大</option></select><span id="helpBtn" title="使用指南" style="cursor:pointer;font-size:15px">❓</span><span id="themeBtn" title="暗色/亮色（防窥屏）" style="cursor:pointer">🌙</span></span></div>
     <div id="notifPanel" class="notif-panel" style="display:none"></div>
     <div id="feed"><div class="thread" id="thread"></div><div class="histview" id="history" style="display:none"></div></div>
     <div id="toBottom" title="回到最新">↓</div>
@@ -525,6 +525,15 @@ modelSel.onchange=()=>localStorage.setItem('ta_model',modelSel.value);
 function applyTheme(t){document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'');document.getElementById('themeBtn').textContent=t==='dark'?'☀️':'🌙';}
 let theme=localStorage.getItem('ta_theme')||'light';applyTheme(theme);
 document.getElementById('themeBtn').onclick=()=>{theme=theme==='dark'?'light':'dark';localStorage.setItem('ta_theme',theme);applyTheme(theme);};
+// ＋新对话:存边界时间戳→清空当前对话(历史仍在左侧日历),新消息从这里重新计
+document.getElementById('newChatBtn').onclick=()=>{
+  if(sendBtn.disabled){return;}   // 流式中不打断
+  localStorage.setItem('ta_convo_start',Date.now());
+  injectedTs=Date.now();localStorage.setItem('ta_notif_injected',injectedTs);
+  thread.innerHTML='';history=[];openView=null;
+  thv.style.display='none';thread.style.display='';
+  rebuildNav();inp.focus();
+};
 // 对话字号(可选,持久化)
 const fontSel=document.getElementById('fontSel');
 function applyFont(px){document.documentElement.style.setProperty('--chat-fs',px+'px');fontSel.value=px;}
@@ -560,7 +569,8 @@ async function pollNotifs(){try{const r=await(await authFetch('/api/notification
   // 定时任务/告警像飞书一样落进对话:首次加载注入「今天」的(不灌历史),之后只注入更新的
   let base=injectedTs;
   if(!base){const t=new Date();t.setHours(0,0,0,0);base=t.getTime()-1;}
-  const fresh=notifs.filter(n=>nts(n.ts)>base).sort((a,c)=>nts(a.ts)-nts(c.ts)).slice(-12);
+  // 定时任务/机会/盘中像飞书一样落进对话;但【风险告警】只进🔔铃铛,不灌进聊天(太烦)
+  const fresh=notifs.filter(n=>nts(n.ts)>base && !/风险|告警/.test(n.label||'')).sort((a,c)=>nts(a.ts)-nts(c.ts)).slice(-12);
   if(fresh.length){thv.style.display='none';thread.style.display='';fresh.forEach(injectNotif);}
   injectedTs=Math.max(base,...(fresh.length?fresh.map(n=>nts(n.ts)):[base]));
   localStorage.setItem('ta_notif_injected',injectedTs);
@@ -608,12 +618,20 @@ async function openDay(date){
   document.getElementById('histBack').onclick=()=>{backToChat();};
 }
 
-// 刷新不丢:登录后把当天已持久化的对话重新渲染进聊天窗(服务端存在 conversations/<今日>.jsonl)
+// 刷新不丢:登录后把「本次对话开始后」已持久化的对话重新渲染进聊天窗
+// 会话边界 ta_convo_start:跨天自动重置为当天0点(每天自动开新对话);点「＋新对话」则置为当下
+function convoStart(){
+  let s=+localStorage.getItem('ta_convo_start')||0;
+  const t=new Date();t.setHours(0,0,0,0);
+  if(s<t.getTime()){s=t.getTime();localStorage.setItem('ta_convo_start',s);}  // 跨天→自动开新对话
+  return s;
+}
 async function restoreToday(){
   const n=new Date();
   const today=`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
   let d;try{d=await(await authFetch('/api/history/'+today)).json()}catch(e){return}
-  const convs=d.conversations||[];if(!convs.length)return;
+  const start=convoStart();
+  const convs=(d.conversations||[]).filter(c=>nts(c.ts)>=start);if(!convs.length)return;
   thread.innerHTML='';history=[];
   convs.forEach(c=>{
     if(c.user){addUser(c.user,c.ts);history.push({role:'user',content:c.user});}

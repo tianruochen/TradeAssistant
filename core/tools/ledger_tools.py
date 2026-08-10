@@ -202,6 +202,11 @@ def _handle_calc_position(args: dict) -> str:
     return json.dumps(compute_trades(cs, cc, seq), ensure_ascii=False)
 
 
+def _handle_compute_portfolio(_args: dict) -> str:
+    from core import portfolio_compute
+    return json.dumps(portfolio_compute.compute(live=True), ensure_ascii=False)
+
+
 
 def _handle_log_decision(args: dict) -> str:
     rec = {"ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -259,6 +264,11 @@ def register() -> None:
                            "shares": {"type": "number"}, "price": {"type": "number"}}}}},
             "required": ["current_shares", "current_cost", "trades"]},
     }, _handle_calc_position)
+    registry.register("compute_portfolio", {
+        "name": "compute_portfolio",
+        "description": "代码现算组合总资产/盈亏/仓位%——**报总资产、总盈亏、持仓市值、仓位占比、翻倍进度时必须调它,禁止照抄 holdings.md 手打的汇总数或自己心算**。持仓列表取自 holdings.md(股数/成本),市值=股数×实时价(港股按汇率折CNY),现价实时。返回每只与合计。",
+        "parameters": {"type": "object", "properties": {}},
+    }, _handle_compute_portfolio)
     registry.register("log_decision", {
         "name": "log_decision",
         "description": "记录一条买卖分析/提示(给出方向性提示时调),事后可对照结果复盘胜率。",

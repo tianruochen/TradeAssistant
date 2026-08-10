@@ -87,7 +87,8 @@ def scan() -> list[dict]:
 
 
 def scan_and_notify(fired: set) -> list[dict]:
-    """扫描 + 按天去重推送到通知流。fired 由调用方跨轮持有。返回本轮新推送项。"""
+    """扫描 + 按天去重,把本轮新发现的问题**合并成一条**推送(不再一条条刷屏)。
+    fired 由调用方跨轮持有。返回本轮新推送项。"""
     from datetime import datetime
     from core import notifications
     today = datetime.now().strftime("%Y-%m-%d")
@@ -97,6 +98,16 @@ def scan_and_notify(fired: set) -> list[dict]:
         if dk in fired:
             continue
         fired.add(dk)
-        notifications.push("风险告警", f"[{item['label']}] {item['detail']}")
         fresh.append(item)
+    if not fresh:
+        return []
+    # 严重度排序,合并成一条体检卡;标题带计数,正文每行一项(治"5条告警刷屏")
+    order = {"high": 0, "medium": 1, "low": 2}
+    fresh.sort(key=lambda x: order.get(x.get("severity"), 3))
+    icon = {"high": "🔴", "medium": "🟠", "low": "🟡"}
+    lines = [f"{icon.get(it['severity'], '•')} [{it['label']}] {it['detail']}" for it in fresh]
+    n_high = sum(1 for it in fresh if it.get("severity") == "high")
+    title = f"风险体检 · {len(fresh)}项" + (f"（{n_high}项高危）" if n_high else "")
+    notifications.push("风险告警", title + "\n" + "\n".join(lines),
+                       summary=f"{title}：{fresh[0]['label']}等")
     return fresh
