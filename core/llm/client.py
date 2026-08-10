@@ -229,8 +229,8 @@ class LLMClient:
                                         slot["function"]["arguments"] += fn["arguments"]
             except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.RemoteProtocolError,
                     httpx.TransportError) as exc:
-                # 中转流式挂住/中断:若还没吐过任何字,转非流式兜底(见下),否则重试/上抛
-                if not yielded_any:
+                # 中转流式挂住/中断:若还没吐过正文,转非流式兜底(见下),否则重试/上抛
+                if not content_parts:
                     logger.warning("LLM流中断(%s),转非流式兜底", type(exc).__name__)
                     break
                 if attempt < _MAX_TRIES - 1:
@@ -241,9 +241,10 @@ class LLMClient:
             for kind, text in splitter.flush():
                 yield _route(kind, text)
 
-            # 中转降级:200 却空流(无正文/无思考/无工具调用)→ 转非流式兜底,别让用户看空白
-            if not yielded_any and not tool_calls:
-                logger.warning("LLM流返回空(中转降级),转非流式兜底")
+            # 中转降级:200 却没吐正文(哪怕吐了思考)且无工具调用 → 转非流式兜底,别让用户只看到开场白/空白。
+            # 关键:用 content_parts 判空,不用 yielded_any(思考模型常吐 reasoning 却空 content,会误判为"非空")
+            if not content_parts and not tool_calls:
+                logger.warning("LLM流无正文(仅思考/空,中转降级),转非流式兜底")
                 break
 
             message: dict[str, Any] = {"role": "assistant", "content": "".join(content_parts)}
@@ -276,6 +277,6 @@ class LLMClient:
         for kind, text in sp.feed(raw) + sp.flush():
             if text:
                 yield {"type": kind, "delta": text}
-        if msg.get("reasoning_content"):
-            yield {"type": "thinking", "delta": str(msg["reasoning_content"])}
+        if msg.get("reasoning_content") and not reasoning_parts:
+            yield {"type": "thinking", "delta": str(msg["reasoning_content"])}   # 若本轮流式已吐过思考,不重复
         yield {"type": "final", "message": msg, "usage": {}}
