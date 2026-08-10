@@ -20,6 +20,17 @@ def _append(fname: str, rec: dict) -> None:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
+def _rewrite(fname: str, recs: list[dict]) -> None:
+    p = data_dir() / fname
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in recs), encoding="utf-8")
+    tmp.replace(p)   # 原子替换,避免半写损坏
+
+
+def _next_id(recs: list[dict]) -> int:
+    return max((int(r.get("id") or 0) for r in recs), default=0) + 1
+
+
 def _read(fname: str) -> list[dict]:
     p = data_dir() / fname
     if not p.exists():
@@ -81,17 +92,115 @@ def realized_pnl() -> dict:
             "closed_trades": closed, "trade_count": len(trades())}
 
 
+# ────────────────────────── 成本/盈亏计算器(确定性,禁 LLM 口算) ──────────────────────────
+
+def compute_trades(current_shares: float, current_cost: float, seq: list[dict]) -> dict:
+    """给定当前持仓(股数+成本价)与一串成交,确定性算出结果。绝不让 LLM 口算。
+    - moving_avg(移动加权平均,标准记账):买入摊高、卖出按均价结算已实现盈亏。
+    - t0_amortize(日内T摊低成本,散户口径):仅当净股数不变(纯回转)时有意义——
+      把回转净差价直接冲减持仓成本,股数不变。
+    返回两种口径 + 客观现金流,供 agent 如实呈现(不猜、不来回改)。"""
+    shares = float(current_shares or 0)
+    pool = shares * float(current_cost or 0)   # 总成本
+    realized = 0.0
+    cash = 0.0
+    buy_amt = buy_sh = sell_amt = sell_sh = 0.0
+    steps = []
+    for t in seq:
+        act = t.get("action")
+        sh = float(t.get("shares") or 0)
+        px = float(t.get("price") or 0)
+        if act == "buy":
+            pool += sh * px; shares += sh; cash -= sh * px
+            buy_amt += sh * px; buy_sh += sh
+        elif act == "sell":
+            avg = pool / shares if shares > 1e-9 else 0.0
+            realized += (px - avg) * sh
+            pool -= avg * sh; shares -= sh; cash += sh * px
+            sell_amt += sh * px; sell_sh += sh
+        steps.append({"action": act, "shares": sh, "price": px,
+                      "after_shares": round(shares, 2),
+                      "after_avg_cost": round(pool / shares, 4) if shares > 1e-9 else 0.0})
+    out = {
+        "method_moving_avg": {
+            "final_shares": round(shares, 2),
+            "final_avg_cost": round(pool / shares, 4) if shares > 1e-9 else 0.0,
+            "realized_pnl": round(realized, 2),
+        },
+        "cash_delta": round(cash, 2),           # 客观现金变动(正=净流入)
+        "steps": steps,
+    }
+    net_share_change = round(buy_sh - sell_sh, 4)
+    # 纯日内回转(买卖股数相等、净持仓不变)→ 给散户"摊低成本"口径
+    if abs(net_share_change) < 1e-9 and current_shares and sell_sh > 0 and buy_sh > 0:
+        net_cash = sell_amt - buy_amt   # 回转净差价(正=赚)
+        new_pool = current_shares * float(current_cost or 0) - net_cash
+        out["method_t0_amortize"] = {
+            "final_shares": round(float(current_shares), 2),
+            "final_avg_cost": round(new_pool / current_shares, 4),
+            "roundtrip_gain": round(net_cash, 2),
+            "note": "日内T回转:股数不变,差价冲减持仓成本(散户'摊低成本'口径)",
+        }
+    return out
+
+
 # ────────────────────────── 工具 ──────────────────────────
 
 def _handle_log_trade(args: dict) -> str:
     act = (args.get("action") or "").strip()
     if act not in ("buy", "sell"):
         return json.dumps({"error": "action 必须是 buy 或 sell"}, ensure_ascii=False)
-    rec = {"ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "action": act,
-           "symbol": str(args.get("symbol") or ""), "name": str(args.get("name") or ""),
-           "shares": args.get("shares"), "price": args.get("price"), "note": str(args.get("note") or "")}
+    try:
+        shares = float(args.get("shares") or 0); price = float(args.get("price") or 0)
+    except (TypeError, ValueError):
+        return json.dumps({"error": "shares/price 必须是数字"}, ensure_ascii=False)
+    symbol = str(args.get("symbol") or "")
+    existing = trades()
+    # 幂等去重:10 分钟内同(方向/代码/股数/价)视为重复调用,直接跳过(治"同一笔录 3 次")
+    now = datetime.now()
+    for t in existing:
+        if (t.get("action") == act and str(t.get("symbol") or "") == symbol
+                and float(t.get("shares") or 0) == shares and float(t.get("price") or 0) == price):
+            try:
+                dt = datetime.strptime(str(t.get("ts") or ""), "%Y-%m-%d %H:%M:%S")
+                if abs((now - dt).total_seconds()) < 600:
+                    return json.dumps({"ok": True, "duplicate_skipped": True,
+                                       "msg": f"该成交(#{t.get('id')})10分钟内已记录过,已跳过重复。如确要再记一笔请说明。",
+                                       "existing": t}, ensure_ascii=False)
+            except ValueError:
+                pass
+    rec = {"id": _next_id(existing), "ts": now.strftime("%Y-%m-%d %H:%M:%S"), "action": act,
+           "symbol": symbol, "name": str(args.get("name") or ""),
+           "shares": shares, "price": price, "note": str(args.get("note") or "")}
     _append("trades.jsonl", rec)
-    return json.dumps({"ok": True, "logged": rec, "realized_pnl": realized_pnl()["total"]}, ensure_ascii=False)
+    return json.dumps({"ok": True, "logged": rec,
+                       "cash_delta": round((price * shares) * (1 if act == "sell" else -1), 2),
+                       "realized_pnl_total": realized_pnl()["total"],
+                       "hint": "只调一次;成本/盈亏用 calc_position 算,勿口算。"}, ensure_ascii=False)
+
+
+def _handle_void_trade(args: dict) -> str:
+    tid = args.get("trade_id")
+    recs = trades()
+    if tid is None:
+        return json.dumps({"error": "需要 trade_id;先看流水拿 id"}, ensure_ascii=False)
+    kept = [r for r in recs if int(r.get("id") or -1) != int(tid)]
+    if len(kept) == len(recs):
+        return json.dumps({"error": f"未找到 id={tid} 的流水"}, ensure_ascii=False)
+    _rewrite("trades.jsonl", kept)
+    return json.dumps({"ok": True, "voided_id": int(tid), "remaining": len(kept)}, ensure_ascii=False)
+
+
+def _handle_calc_position(args: dict) -> str:
+    try:
+        cs = float(args.get("current_shares") or 0); cc = float(args.get("current_cost") or 0)
+    except (TypeError, ValueError):
+        return json.dumps({"error": "current_shares/current_cost 必须是数字"}, ensure_ascii=False)
+    seq = args.get("trades") or []
+    if not isinstance(seq, list) or not seq:
+        return json.dumps({"error": "trades 需为非空数组,每项含 action/shares/price"}, ensure_ascii=False)
+    return json.dumps(compute_trades(cs, cc, seq), ensure_ascii=False)
+
 
 
 def _handle_log_decision(args: dict) -> str:
@@ -131,6 +240,25 @@ def register() -> None:
             "shares": {"type": "number"}, "price": {"type": "number"}, "note": {"type": "string"}},
             "required": ["action", "symbol", "shares", "price"]},
     }, _handle_log_trade)
+    registry.register("void_trade", {
+        "name": "void_trade",
+        "description": "作废/撤销一笔记错的流水(按 trade_id)。误记/重复时用来清理,不用麻烦用户手工删。",
+        "parameters": {"type": "object", "properties": {
+            "trade_id": {"type": "number", "description": "要作废的流水 id(从流水记录里看)"}},
+            "required": ["trade_id"]},
+    }, _handle_void_trade)
+    registry.register("calc_position", {
+        "name": "calc_position",
+        "description": "确定性计算成交对持仓成本/已实现盈亏/现金的影响——**任何涉及成本价、盈亏、日内T摊薄的计算都必须调它,严禁自己口算**。传当前股数+成本价+这串成交,返回移动加权平均口径与(纯回转时)日内T摊低成本口径,以及客观现金变动。",
+        "parameters": {"type": "object", "properties": {
+            "current_shares": {"type": "number", "description": "本次成交前的持股数"},
+            "current_cost": {"type": "number", "description": "本次成交前的持仓成本价"},
+            "trades": {"type": "array", "description": "按时间顺序的成交列表",
+                       "items": {"type": "object", "properties": {
+                           "action": {"type": "string", "enum": ["buy", "sell"]},
+                           "shares": {"type": "number"}, "price": {"type": "number"}}}}},
+            "required": ["current_shares", "current_cost", "trades"]},
+    }, _handle_calc_position)
     registry.register("log_decision", {
         "name": "log_decision",
         "description": "记录一条买卖分析/提示(给出方向性提示时调),事后可对照结果复盘胜率。",

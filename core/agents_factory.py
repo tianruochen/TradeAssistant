@@ -26,7 +26,7 @@ _EXPERT_TOOLS = {
     "hunter": _MARKET + _READ + ["sense_market_env"],   # 机会挖掘：行情 + 读 + 大盘环境
     "risk": _MARKET + _READ + ["check_constraints", "sense_market_env"],  # 风控：行情 + 读 + 约束 + 环境
     "ledger": ["sense_stock_quote", "read_holdings", "read_watchlist", "read_plan",
-               "write_file", "log_trade", "log_decision"],  # 记账：报价 + 读写持仓/计划 + 流水/决策留痕
+               "write_file", "log_trade", "log_decision", "calc_position", "void_trade"],  # 记账：报价 + 读写持仓/计划 + 流水/决策/算账/撤销
 }
 
 _EXPERT_DESC = {
@@ -69,7 +69,7 @@ def build_agent(name: str, is_primary: bool = False, model_override: str | None 
                 thinking: bool | None = None) -> Agent:
     if is_primary:
         experts = config().get("agents", {}).get("experts", [])
-        tools = _MARKET + _READ + ["write_file", "log_trade", "log_decision", "check_constraints", "sense_market_env"] + [f"consult_{e}" for e in experts]
+        tools = _MARKET + _READ + ["write_file", "log_trade", "log_decision", "calc_position", "void_trade", "check_constraints", "sense_market_env"] + [f"consult_{e}" for e in experts]
     else:
         tools = _EXPERT_TOOLS.get(name, _MARKET + _READ)
     mc = model_config(name)
