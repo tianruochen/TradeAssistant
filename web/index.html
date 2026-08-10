@@ -385,7 +385,7 @@ async function openStrategy(){
   let text='';try{text=(await(await authFetch('/api/strategy')).json()).text||''}catch(e){}
   thv.innerHTML=`<span class="back" id="stBack">← 返回对话</span>
     <h2 style="margin:8px 0">📋 交易策略 <span style="font-size:12px;font-weight:400;color:var(--sub)">（可编辑，保存后 Alpha 立即按新策略执行）</span></h2>
-    <textarea id="stratText" style="width:100%;box-sizing:border-box;height:58vh;font-family:inherit;font-size:13px;line-height:1.65;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink)"></textarea>
+    <textarea id="stratText" style="width:100%;box-sizing:border-box;height:calc(100vh - 250px);min-height:420px;max-height:none;resize:vertical;font-family:inherit;font-size:13px;line-height:1.7;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink)"></textarea>
     <div style="margin-top:10px"><button id="stratSave" style="${_SVBTN}">保存策略</button> <span id="stratMsg" style="color:var(--sub);font-size:12px;margin-left:8px"></span></div>`;
   thread.style.display='none';thv.style.display='';feed.scrollTop=0;
   _g('stratText').value=text;_g('stBack').onclick=backToChat;
@@ -772,6 +772,7 @@ async function send(text){
             if(r){r.dataset.done=1;r.querySelector('.st').textContent='✅'}
             if(!content){wStop();el.wtx.textContent='整理结论中…';}}}
         else if(ev.type==='error'){content+='\n\n⚠️ '+ev.message;el.bubble.innerHTML=md(content)}
+        else if(ev.type==='done'){const dm=(ev.message&&ev.message.content)||'';if(!content&&dm){content=dm;el.bubble.innerHTML=md(content);}}
       }}
   }catch(e){if(e.name==='AbortError'){aborted=true;}else{el.bubble.textContent='请求失败：'+e}}
   botMsg.removeAttribute('data-streaming');
