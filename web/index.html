@@ -749,8 +749,10 @@ async function send(text){
     wTick=setInterval(()=>{if(content){wStop();return;}const s=Math.round((Date.now()-t0)/1000);el.wtx.textContent='正在'+wBase+'… '+s+'s';},1000);};
   const finishThink=()=>{if(hadThink&&!thinkDone){thinkDone=true;const s=Math.max(1,Math.round((Date.now()-thinkT0)/1000));el.thinkLabel.textContent=`已思考（用时 ${s} 秒）`;if(el.think.open)el.think.open=false;}};
   el.working.style.display='';wStart('思考');   // 立刻显示进度,慢中转下也不像死了
+  // 构造本轮请求消息:剔除其他"在途未回答"的提问(连续的user中只留最后即本次),每条独立作答不串味
+  const reqMsgs=history.filter((m,i)=>!(m.role==='user'&&history[i+1]&&history[i+1].role==='user'));
   try{
-    const resp=await authFetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:history,model:curModel(),thinking:thinkMode}),signal:ac.signal});
+    const resp=await authFetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:reqMsgs,model:curModel(),thinking:thinkMode}),signal:ac.signal});
     const rd=resp.body.getReader(),dec=new TextDecoder();let buf='';
     while(true){const {done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});
       let i;while((i=buf.indexOf('\n\n'))>=0){const line=buf.slice(0,i).trim();buf=buf.slice(i+2);
