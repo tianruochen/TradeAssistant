@@ -77,7 +77,7 @@ async def run_job(label: str, prompt: str, push_external: bool = True) -> str:
     return text
 
 
-JOB_TIMEOUT = 240   # 单个定时任务硬超时(秒)
+JOB_TIMEOUT = 600   # 单个定时任务硬超时(秒)。慢中转下深度研究/进度含多轮工具+思考,给足时间(原240易超时)
 
 
 async def run_loop(stop: asyncio.Event) -> None:

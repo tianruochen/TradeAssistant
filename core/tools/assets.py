@@ -67,9 +67,43 @@ def _handle_write_file(args: dict) -> str:
                           ensure_ascii=False)
     p = _safe(name)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(str(content), encoding="utf-8")
-    return json.dumps({"ok": True, "path": name, "bytes": len(str(content)),
+    text = str(content)
+    if name == _HOLDINGS and p.exists():
+        # 禁止 agent 改现价/市值/盈亏/盈亏%列——这些由 compute_portfolio 实时算,不许模型手写。
+        # 写入时把这几列冻结成旧文件里同代码的值(agent 只能改股数/成本/名称/市场)。
+        text = _freeze_price_cols(text, p.read_text(encoding="utf-8"))
+    p.write_text(text, encoding="utf-8")
+    return json.dumps({"ok": True, "path": name, "bytes": len(text),
                        "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}, ensure_ascii=False)
+
+
+def _row_cells(line: str) -> list[str] | None:
+    """持仓数据行(| 序号 | ... |,≥11列且首列是数字)→ 单元格列表,否则 None。"""
+    if not line.strip().startswith("|"):
+        return None
+    cells = [c.strip() for c in line.strip().strip("|").split("|")]
+    if len(cells) < 11 or not cells[0].isdigit():
+        return None
+    return cells
+
+
+def _freeze_price_cols(new_text: str, old_text: str) -> str:
+    """把新内容里每只持仓的 现价/市值/盈亏/盈亏%(列5-8)替换成旧文件里同代码的值。
+    列: 0#|1名|2代码|3股数|4成本|5现价|6市值|7盈亏|8盈亏%|9持仓%|10市场。新增标的(旧文件没有)保留原值。"""
+    old = {}
+    for ln in old_text.splitlines():
+        c = _row_cells(ln)
+        if c:
+            old[c[2]] = c[5:9]   # code -> [现价,市值,盈亏,盈亏%]
+    out = []
+    for ln in new_text.splitlines():
+        c = _row_cells(ln)
+        if c and c[2] in old:
+            c[5:9] = old[c[2]]
+            out.append("| " + " | ".join(c) + " |")
+        else:
+            out.append(ln)
+    return "\n".join(out) + ("\n" if new_text.endswith("\n") else "")
 
 
 def register() -> None:

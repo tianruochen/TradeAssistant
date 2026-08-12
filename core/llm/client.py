@@ -35,7 +35,7 @@ def _retryable(status: int, body: str = "") -> bool:
         return True
     return False
 # 全局并发闸:同一 Key 并发过多正是 429 主因,限流从源头减少触发(定时任务+用户+子agent同抢)
-_SEM = asyncio.Semaphore(2)
+_SEM = asyncio.Semaphore(16)   # 上游支持并发→放开自家限流,允许并发多问/多子agent(原来2会把并发卡死→524)
 
 
 def _backoff(attempt: int) -> float:

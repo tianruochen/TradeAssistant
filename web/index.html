@@ -737,9 +737,8 @@ function toolLabel(t){return TOOL_LABELS[t]||t;}
 function _argHint(a){try{const v=(a&&(a.code||a.symbol||a.name||a.question||a.market_env));return v?String(v).slice(0,40):'';}catch(e){return '';}}
 async function send(text){
   text=(text||inp.value).trim();if(!text)return;
-  if(curAbort){try{curAbort.abort()}catch(e){}}   // 发新问题→先中止在途的那条(避免两条并发抢慢中转导致524)
   thv.style.display='none';thread.style.display='';
-  inp.value='';inp.style.height='26px';sendBtn.disabled=true;stick=true;openView=null;refreshViewLinks();
+  inp.value='';inp.style.height='26px';stick=true;openView=null;refreshViewLinks();   // 不禁用发送:支持并发多问
   addUser(text);history.push({role:'user',content:text});
   const el=addBot();const botMsg=el.bubble.closest('.msg');
   const ac=new AbortController();curAbort=ac;streamingMsg=botMsg;botMsg.dataset.streaming='1';
