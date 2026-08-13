@@ -24,7 +24,8 @@ _PORT_TTL = 150.0       # 派生组合缓存有效期(>2×盘中间隔,始终命
 
 # 派生组合:uid -> (ts, portfolio_dict)。市场数据本身缓存在 market_tools/market_env 的按-symbol 缓存里。
 _PORT: dict[str, tuple[float, dict]] = {}
-_last_env: dict | None = None
+_last_env: dict | None = None        # 路径A:全局大盘环境
+_last_sectors: dict | None = None    # 路径A:全局热点(板块资金流)
 _stats = {"ticks": 0, "last_ok": 0.0, "last_err": ""}
 
 
@@ -38,6 +39,10 @@ def get_portfolio(uid: str) -> dict | None:
 
 def get_env() -> dict | None:
     return _last_env
+
+
+def get_sectors() -> dict | None:
+    return _last_sectors
 
 
 def stats() -> dict:
@@ -62,7 +67,8 @@ def _persist() -> None:
     try:
         p = _snapshot_path()
         p.parent.mkdir(parents=True, exist_ok=True)
-        data = {"env": _last_env, "port": {u: v[1] for u, v in _PORT.items()},
+        data = {"env": _last_env, "sectors": _last_sectors,
+                "port": {u: v[1] for u, v in _PORT.items()},
                 "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
         tmp = p.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -73,13 +79,14 @@ def _persist() -> None:
 
 def _load_persisted() -> None:
     """启动时用上次落盘的快照热身(重启不冷启)。"""
-    global _last_env
+    global _last_env, _last_sectors
     try:
         p = _snapshot_path()
         if not p.exists():
             return
         d = json.loads(p.read_text(encoding="utf-8"))
         _last_env = d.get("env")
+        _last_sectors = d.get("sectors")
         now = time.time()
         for uid, port in (d.get("port") or {}).items():
             _PORT[uid] = (now, port)   # 落盘值先当热用,下个 tick 会刷新
@@ -89,24 +96,49 @@ def _load_persisted() -> None:
 
 
 def _poll_once() -> None:
-    """一个 tick:刷大盘环境(全局)+ 每个已配 key 用户的组合(顺带预热其持仓报价缓存)。"""
-    global _last_env
+    """一个 tick,两条并行路径:
+    路径A(全局共享,拉一次所有人共用):大盘环境 + 热点板块资金流。
+    路径B(按用户):各用户持仓个股报价(按 symbol 并集去重预热)+ 算好组合。"""
+    global _last_env, _last_sectors
+    import json as _json
     from core import users, tenancy, market_env, portfolio_compute
+    from core.tools import market_tools as mt
+
+    # ── 路径A:全局大盘 + 热点(与用户无关,一次拉取全体共享) ──
     try:
-        _last_env = market_env.classify()   # 预热全局指数缓存
+        _last_env = market_env.classify()          # 预热全局指数缓存
     except Exception as exc:  # noqa: BLE001
         logger.warning("大盘环境预热失败: %r", exc)
-    for u in users.all_users():
-        if not u.get("llm_key"):
-            continue
+    try:
+        _last_sectors = _json.loads(mt._handle_sector_flow({}))   # 预热热点板块(全局缓存)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("板块热点预热失败: %r", exc)
+
+    # ── 路径B:用户标的报价并集去重预热 + 各自算组合 ──
+    all_users = [u for u in users.all_users() if u.get("llm_key")]
+    codes: set[str] = set()
+    for u in all_users:                              # 先收集所有用户持仓代码(并集)
+        tenancy.set_user(u["uid"], None)
+        try:
+            for r in portfolio_compute._parse_rows():
+                c = (r.get("code") or "").strip()
+                if len(c) == 6 and c.isdigit():
+                    codes.add(c)
+        except Exception:  # noqa: BLE001
+            pass
+    for c in codes:                                  # 每只只预热一次(多用户共享报价缓存)
+        try:
+            mt._ks_quote(c)
+        except Exception:  # noqa: BLE001
+            pass
+    for u in all_users:                              # 报价已热 → 各用户算组合(读热缓存,快)
         uid = u["uid"]
         tenancy.set_user(uid, None)
         try:
-            # compute(live=True) 会逐只走 klineshare 预热报价缓存,并算好组合;结果进 _PORT
-            p = portfolio_compute.compute(live=True)
-            _PORT[uid] = (time.time(), p)
+            _PORT[uid] = (time.time(), portfolio_compute.compute(live=True))
         except Exception as exc:  # noqa: BLE001
             logger.warning("组合预热失败[uid %s]: %r", uid, exc)
+
     _stats["ticks"] += 1
     _stats["last_ok"] = time.time()
     _persist()
