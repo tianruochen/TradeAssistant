@@ -399,25 +399,49 @@ def _kline_tencent(sym: str, period: str, count: int) -> dict | None:
 
 # ────────────────────────── sense_sector_flow ──────────────────────────
 
+# 代表性行业/主题 ETF —— 东财板块资金流被墙时,用这些 ETF 的涨跌(腾讯源,服务器可达)近似板块热度。
+_SECTOR_ETFS = {
+    "512480": "半导体", "512760": "芯片", "159819": "人工智能AI", "515790": "光伏",
+    "515030": "新能源车", "512010": "医药", "159992": "创新药", "512170": "医疗",
+    "512660": "军工", "512000": "券商", "512400": "有色金属", "159611": "电力",
+    "512980": "传媒", "159928": "消费", "512690": "酒", "516160": "新能源",
+    "588000": "科创50", "159740": "恒生科技",
+}
+
+
+def sector_heat(top_n: int = 12) -> dict:
+    """行业板块热度:用代表 ETF 的当日涨跌排名(腾讯源,服务器可达)。东财资金流被墙时的可用替代。"""
+    out = []
+    for code, name in _SECTOR_ETFS.items():
+        q = _tencent_quote(code)
+        if q and q.get("change_pct") is not None:
+            out.append({"sector": name, "etf": code, "change_pct": q["change_pct"], "price": q["price"]})
+    out.sort(key=lambda x: x["change_pct"], reverse=True)
+    return _stamp({"method": "行业代表ETF涨跌(近似板块热度,非主力资金流)",
+                   "hot_top": out[:top_n], "cold_bottom": out[-3:][::-1] if len(out) > 3 else []},
+                  "腾讯·行业ETF")
+
+
 def _handle_sector_flow(args: dict) -> str:
     indicator = (args.get("indicator") or "今日").strip()
     top_n = min(int(args.get("top_n") or 15), 30)
     try:
         import akshare as ak
         df = ak.stock_sector_fund_flow_rank(indicator=indicator, sector_type="行业资金流")
-    except Exception as exc:
-        return _j({"error": f"板块资金流暂不可用（东财接口异常）: {str(exc)[:80]}"})
-    if df is None or df.empty:
-        return _j({"error": "无数据"})
-    cmap = {}
-    for c in df.columns:
-        if "名称" in c: cmap[c] = "name"
-        elif "主力净流入" in c and "占比" not in c: cmap[c] = "main_inflow"
-        elif c == "今日涨跌幅" or c == "涨跌幅": cmap[c] = "change_pct"
-    df = df.rename(columns=cmap)
-    top = [{"name": str(r.get("name", "")), "change_pct": _f(r, "change_pct"),
-            "main_inflow_yi": round(_f(r, "main_inflow") / 1e8, 2)} for _, r in df.head(top_n).iterrows()]
-    return _j(_stamp({"indicator": indicator, "inflow_top": top}, "eastmoney(行业资金流)"))
+        if df is not None and not df.empty:
+            cmap = {}
+            for c in df.columns:
+                if "名称" in c: cmap[c] = "name"
+                elif "主力净流入" in c and "占比" not in c: cmap[c] = "main_inflow"
+                elif c == "今日涨跌幅" or c == "涨跌幅": cmap[c] = "change_pct"
+            df = df.rename(columns=cmap)
+            top = [{"name": str(r.get("name", "")), "change_pct": _f(r, "change_pct"),
+                    "main_inflow_yi": round(_f(r, "main_inflow") / 1e8, 2)} for _, r in df.head(top_n).iterrows()]
+            return _j(_stamp({"indicator": indicator, "inflow_top": top}, "eastmoney(行业资金流)"))
+    except Exception:
+        pass
+    # 东财被墙 → 用腾讯行业ETF涨跌近似热度(服务器可达)
+    return _j(sector_heat(top_n))
 
 
 # ────────────────────────── sense_market_scan ──────────────────────────

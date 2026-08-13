@@ -113,13 +113,15 @@ def _poll_once() -> None:
     from core import users, tenancy, market_env, portfolio_compute
     from core.tools import market_tools as mt
 
-    # ── 路径A:全局大盘(与用户无关,一次拉取全体共享) ──
+    # ── 路径A:全局大盘 + 热点(与用户无关,一次拉取全体共享) ──
     try:
         _last_env = market_env.classify()          # 预热全局指数缓存(腾讯源,可用)
     except Exception as exc:  # noqa: BLE001
         logger.warning("大盘环境预热失败: %r", exc)
-    # 注:热点板块资金流走东财、在服务器被墙(会挂起无超时)→ 暂不在平面预热,由工具按需取;
-    #     待接入可用的板块数据源(P4)再纳入路径A的全局热点预热。
+    try:
+        _last_sectors = mt.sector_heat()           # 行业热度(腾讯行业ETF涨跌;东财被墙的可用替代)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("板块热点预热失败: %r", exc)
 
     # ── 路径B:用户标的报价并集去重预热 + 各自算组合 ──
     all_users = [u for u in users.all_users() if u.get("llm_key")]
