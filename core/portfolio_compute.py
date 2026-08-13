@@ -28,21 +28,53 @@ def _f(s) -> float | None:
     return float(m.group(0).replace(",", "")) if m else None
 
 
+def _colmap(cells: list[str]) -> dict:
+    """按表头名映射列(不依赖固定列序/列数)——agent 可自由增删列、改列名而不破坏解析。"""
+    m: dict[str, int] = {}
+    for i, h in enumerate(cells):
+        h = h.strip()
+        if "代码" in h: m.setdefault("code", i)
+        elif "股数" in h or "持股" in h or "数量" in h: m.setdefault("shares", i)
+        elif "成本" in h: m.setdefault("cost", i)
+        elif "现价" in h or "最新" in h: m.setdefault("price", i)
+        elif "市值" in h: m.setdefault("mv", i)
+        elif "市场" in h or "板块" in h: m.setdefault("market", i)
+        elif "标的" in h or "名称" in h or "名字" in h: m.setdefault("name", i)
+    return m
+
+
 def _parse_rows() -> list[dict]:
+    """解析 holdings.md 持仓表。**按表头名定位列**,兼容不同列序/列数(agent 常重排表格)。"""
     p = data_dir() / "holdings.md"
     if not p.exists():
         return []
     rows = []
+    cm: dict | None = None
     for line in p.read_text(encoding="utf-8").splitlines():
-        if not line.strip().startswith("|"):
+        s = line.strip()
+        if not s.startswith("|"):
+            cm = None            # 离开表格 → 下张表重新识别表头
             continue
-        c = [x.strip() for x in line.strip().strip("|").split("|")]
-        if len(c) < 11 or not c[0].isdigit():   # 只取数据行(首列序号)
+        c = [x.strip() for x in s.strip("|").split("|")]
+        if all(set(x) <= set(":- ") for x in c):   # 分隔行 |:--|:--|
             continue
-        # 列: # 标的 代码 股数 成本价 现价 市值 盈亏 盈亏% 持仓% 市场
-        rows.append({"name": c[1], "code": c[2], "shares": _f(c[3]), "cost": _f(c[4]),
-                     "px_col": _f(c[5]), "mv_col": _f(c[6]), "market": c[10],
-                     "is_hk": ("港股" in c[10]) or ("HKD" in c[4]) or ("HKD" in c[5])})
+        if cm is None:           # 第一条管道行当表头:必须能认出 代码 + 股数/成本
+            probe = _colmap(c)
+            if "code" in probe and ("shares" in probe or "cost" in probe):
+                cm = probe
+            continue
+        def cell(k):
+            i = cm.get(k)
+            return c[i] if (i is not None and i < len(c)) else ""
+        code = cell("code").strip()
+        shares = _f(cell("shares"))
+        if shares is None and not code:   # 非数据行(汇总/注释)
+            continue
+        mkt = cell("market")
+        cost_cell, px_cell = cell("cost"), cell("price")
+        rows.append({"name": cell("name"), "code": code, "shares": shares, "cost": _f(cost_cell),
+                     "px_col": _f(px_cell), "mv_col": _f(cell("mv")), "market": mkt,
+                     "is_hk": ("港股" in mkt) or ("HK" in mkt) or ("HKD" in cost_cell) or ("HKD" in px_cell)})
     return rows
 
 
