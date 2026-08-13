@@ -11,8 +11,8 @@ import time
 
 from core.config import config, data_dir
 
-_CACHE: dict = {"t": 0.0, "data": None}
-_TTL = 60.0   # 实时价缓存 60s,避免侧栏频繁轮询打爆数据源
+_CACHE: dict = {}      # 按 uid 键:{uid: (ts, data)},多用户不互相冲刷
+_TTL = 120.0           # 组合缓存 120s(后台每60s预热→始终命中);侧栏/工具读热缓存,不必现算
 
 
 def _fx() -> float:
@@ -60,8 +60,11 @@ def compute(live: bool = True) -> dict:
     """算组合:每只 市值=股数×现价(港股×汇率),盈亏=市值-股数×成本,总资产=Σ市值+现金。
     现价优先实时;无代码(如未上市)或取价失败则回退表格现价列/市值列,并在 price_source 标注。"""
     now = time.time()
-    if live and _CACHE["data"] and now - _CACHE["t"] < _TTL:
-        return _CACHE["data"]
+    from core.tenancy import CURRENT_UID
+    uid = CURRENT_UID.get() or "_global"
+    hit = _CACHE.get(uid)
+    if live and hit and now - hit[0] < _TTL:
+        return hit[1]
     fx = _fx()
     rows = _parse_rows()
     positions = []
@@ -134,5 +137,5 @@ def compute(live: bool = True) -> dict:
         out["to_double"] = round(init * 2 - total_assets)
         out["to_double_pct"] = round((init * 2 - total_assets) / total_assets * 100, 2) if total_assets else None
     if live:
-        _CACHE.update(t=now, data=out)
+        _CACHE[uid] = (now, out)
     return out

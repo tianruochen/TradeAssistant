@@ -93,8 +93,15 @@ async def stats_handler(_req: web.Request) -> web.Response:
 
 
 def _portfolio_snapshot() -> dict:
-    """组合摘要给侧栏 OKR:优先代码现算(60s缓存),失败回退手打摘要。"""
+    """组合摘要给侧栏 OKR:优先读行情平面的热组合(后台每45s预热,秒回);
+    无则代码现算(会自建缓存);再失败回退手打摘要。"""
     try:
+        from core import tenancy, market_plane
+        uid = tenancy.CURRENT_UID.get()
+        if uid:
+            warm = market_plane.get_portfolio(uid)
+            if warm:
+                return warm
         from core import portfolio_compute
         return portfolio_compute.compute(live=True)
     except Exception:  # noqa: BLE001
@@ -237,8 +244,10 @@ async def index(_req: web.Request) -> web.Response:
 
 
 async def _on_startup(app: web.Application) -> None:
+    from core import market_plane
     app["stop"] = asyncio.Event()
     app["bg"] = [
+        asyncio.create_task(market_plane.poll_loop(app["stop"])),  # 行情数据平面:后台预热行情+组合
         asyncio.create_task(scheduler.run_loop(app["stop"])),
         asyncio.create_task(alerts.poll_loop(app["stop"])),   # 价格事件触发
         asyncio.create_task(wechat.poll_loop(app["stop"])),   # 无凭据自动返回

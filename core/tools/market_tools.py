@@ -48,7 +48,7 @@ def _ks_get(path: str, params: dict, cache_key: str, ttl: int):
 
 
 def _ks_quote(code: str) -> dict | None:
-    j = _ks_get("realtime", {"symbol": code}, f"ksq:{code}", 30)
+    j = _ks_get("realtime", {"symbol": code}, f"ksq:{code}", 90)   # 90s:后台每45s预热→工具多读热缓存
     d = (j or {}).get("data") or {}
     if not d.get("price"):
         return None
