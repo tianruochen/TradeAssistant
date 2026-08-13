@@ -36,32 +36,23 @@ def _sector(market: str) -> str:
 
 
 def parse_holdings() -> dict:
-    """解析 holdings.md 的持仓表 + 现金占比。返回 positions/cash_pct/total_assets。"""
-    p = data_dir() / "holdings.md"
-    if not p.exists():
-        return {"positions": [], "cash_pct": None, "total_assets": None}
-    text = p.read_text(encoding="utf-8")
-
+    """持仓 + 现金占比。复用 portfolio_compute(按表头解析 + 代码现算),
+    不再自己按固定列offset解析(agent 重排表格也不破)。返回 positions/cash_pct/total_assets。"""
+    from core import portfolio_compute
+    try:
+        r = portfolio_compute.compute(live=True)   # 命中plane预热的热缓存,快
+    except Exception:  # noqa: BLE001
+        r = {}
     positions = []
-    for line in text.splitlines():
-        if not line.strip().startswith("|"):
-            continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) < 11 or not cells[0].isdigit():   # 只取数据行(首列是序号)
-            continue
-        name, market = cells[1], cells[10]
-        wm = re.search(r"([\d.]+)\s*%", cells[9])        # 持仓% 列
-        weight = float(wm.group(1)) if wm else None
-        pm = re.search(r"([+\-]?[\d.]+)\s*%", cells[8])   # 盈亏% 列(含正负号)
-        pnl_pct = float(pm.group(1)) if pm else None
-        positions.append({"name": name, "code": cells[2], "weight_pct": weight, "pnl_pct": pnl_pct,
-                          "sector": _sector(market), "is_etf": _is_etf(name, market)})
-
-    cm = re.search(r"现金余额.*?占总资产\s*([\d.]+)\s*%", text)
-    cash_pct = float(cm.group(1)) if cm else None
-    tm = re.search(r"当前总资产.*?¥\s*([\d,]+(?:\.\d+)?)", text)
-    total = float(tm.group(1).replace(",", "")) if tm else None
-    return {"positions": positions, "cash_pct": cash_pct, "total_assets": total}
+    for p in (r.get("positions") or []):
+        mkt = p.get("market") or ""
+        positions.append({
+            "name": p.get("name"), "code": p.get("code"),
+            "weight_pct": p.get("weight_pct"), "pnl_pct": p.get("pnl_pct"),
+            "sector": _sector(mkt), "is_etf": _is_etf(p.get("name") or "", mkt),
+        })
+    return {"positions": positions, "cash_pct": r.get("cash_pct"),
+            "total_assets": r.get("total_assets")}
 
 
 def check(market_env: str = "shake") -> dict:
