@@ -28,6 +28,15 @@ _last_env: dict | None = None        # 路径A:全局大盘环境
 _last_sectors: dict | None = None    # 路径A:全局热点(板块资金流)
 _stats = {"ticks": 0, "last_ok": 0.0, "last_err": ""}
 
+# ── P3 异动自动分析 ──
+_QUOTE_CHG: dict[str, float] = {}    # code -> 当日涨跌%(用于大幅波动检测)
+_PREV_ENV: str | None = None         # 上一 tick 的大盘环境(判断切换)
+_FIRED: set = set()                  # (date, uid, event_key) 当天去重
+_LAST_REPORT: dict[str, float] = {}  # uid -> 上次自动报告时间(冷却)
+_PENDING: list[tuple[str, list]] = []  # 待 async 处理的 (uid, events)
+_BIG_MOVE = 6.0        # 持仓单只当日振幅≥此值 → 异动
+_REPORT_COOLDOWN = 1800.0   # 每用户自动报告冷却(30min),防刷屏烧钱
+
 
 def get_portfolio(uid: str) -> dict | None:
     """读某用户的热组合快照;无/过期返回 None(调用方自行回源)。"""
@@ -126,20 +135,54 @@ def _poll_once() -> None:
             pass
     for c in codes:                                  # 每只只预热一次(多用户共享报价缓存)
         try:
-            mt._ks_quote(c)
+            q = mt._ks_quote(c)
+            if q and q.get("change_pct") is not None:
+                ch = float(q["change_pct"])
+                _QUOTE_CHG[c] = ch * 100 if abs(ch) < 1 else ch   # 兼容比率/百分比两种口径
         except Exception:  # noqa: BLE001
             pass
     for u in all_users:                              # 报价已热 → 各用户算组合(读热缓存,快)
         uid = u["uid"]
         tenancy.set_user(uid, None)
         try:
-            _PORT[uid] = (time.time(), portfolio_compute.compute(live=True))
+            pf = portfolio_compute.compute(live=True)
+            _PORT[uid] = (time.time(), pf)
+            evs = _detect(uid, pf)                    # P3:检测异动
+            if evs:
+                _PENDING.append((uid, evs))
         except Exception as exc:  # noqa: BLE001
             logger.warning("组合预热失败[uid %s]: %r", uid, exc)
 
+    global _PREV_ENV
+    _PREV_ENV = (_last_env or {}).get("env")
     _stats["ticks"] += 1
     _stats["last_ok"] = time.time()
     _persist()
+
+
+def _detect(uid: str, pf: dict) -> list[dict]:
+    """基于热数据检测异动(纯读,不调 LLM)。返回事件列表。"""
+    evs = []
+    for p in (pf.get("positions") or []):
+        code, name = p.get("code") or "", p.get("name") or ""
+        pnl = p.get("pnl_pct")
+        if pnl is not None:
+            if pnl <= -15:
+                evs.append({"key": f"clear:{code}", "sev": "high",
+                            "desc": f"{name} 浮亏 {pnl}%,触及清仓线(≤-15%)"})
+            elif pnl <= -8:
+                evs.append({"key": f"halve:{code}", "sev": "med",
+                            "desc": f"{name} 浮亏 {pnl}%,触及减半线(≤-8%)"})
+        chg = _QUOTE_CHG.get(code)
+        if chg is not None and abs(chg) >= _BIG_MOVE:
+            evs.append({"key": f"move:{code}:{'up' if chg > 0 else 'dn'}", "sev": "med",
+                        "desc": f"{name} 当日{'大涨' if chg > 0 else '大跌'} {chg:+.1f}%"})
+    # 大盘环境切换
+    cur_env = (_last_env or {}).get("env")
+    if _PREV_ENV and cur_env and cur_env != _PREV_ENV:
+        evs.append({"key": f"regime:{cur_env}", "sev": "high",
+                    "desc": f"大盘环境切换:{_PREV_ENV}→{cur_env}"})
+    return evs
 
 
 async def poll_loop(stop: asyncio.Event) -> None:
@@ -153,8 +196,47 @@ async def poll_loop(stop: asyncio.Event) -> None:
         except Exception as exc:  # noqa: BLE001
             _stats["last_err"] = repr(exc)[:120]
             logger.warning("行情平面 tick 异常: %r", exc)
+        await _process_events()   # P3:对检测到的异动触发自动分析(带去重/冷却/预算/时段闸)
         interval = _INTRADAY_SEC if _is_trading_hours() else _OFFHOURS_SEC
         try:
             await asyncio.wait_for(stop.wait(), timeout=interval)
         except asyncio.TimeoutError:
             pass
+
+
+async def _process_events() -> None:
+    """把 _poll_once 检测到的异动,经四道闸(时段/去重/冷却/预算)后触发 LLM 报告并推送。"""
+    global _PENDING
+    pending, _PENDING = _PENDING, []
+    if not pending or not _is_trading_hours():   # 只在盘中自动分析(闭市不打扰)
+        return
+    from datetime import datetime
+    from core import tenancy, user_settings
+    from core.stats import auto_allowed
+    from core.scheduler import run_job
+    today = datetime.now().strftime("%Y-%m-%d")
+    for k in [k for k in _FIRED if k[0] != today]:   # 清理隔日去重键,避免无界增长
+        _FIRED.discard(k)
+    now = time.time()
+    for uid, evs in pending:
+        fresh = [e for e in evs if (today, uid, e["key"]) not in _FIRED]   # 当天去重
+        if not fresh:
+            continue
+        if now - _LAST_REPORT.get(uid, 0.0) < _REPORT_COOLDOWN:            # 30min 冷却
+            continue
+        tenancy.set_user(uid, None)
+        if not user_settings.load(uid).get("schedule", {}).get("enabled", True):
+            continue
+        if not auto_allowed():                                            # 当日额度
+            continue
+        for e in fresh:
+            _FIRED.add((today, uid, e["key"]))
+        _LAST_REPORT[uid] = now
+        lines = "\n".join(f"- {e['desc']}" for e in fresh[:6])
+        prompt = ("【异动自动分析】刚检测到以下持仓/大盘异动,请**只针对这些异动**按交易策略快速评估并给可执行建议"
+                  "(先读 read_holdings/compute_portfolio 确认实时数据,再结论):\n" + lines)
+        try:
+            await asyncio.wait_for(run_job("异动分析", prompt, push_external=True), timeout=300)
+            logger.info("异动自动分析已推送[uid %s]: %d项", uid, len(fresh))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("异动自动分析失败[uid %s]: %r", uid, exc)
