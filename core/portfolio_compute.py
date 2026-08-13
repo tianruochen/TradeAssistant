@@ -12,7 +12,7 @@ import time
 from core.config import config, data_dir
 
 _CACHE: dict = {}      # 按 uid 键:{uid: (ts, data)},多用户不互相冲刷
-_TTL = 120.0           # 组合缓存 120s(后台每60s预热→始终命中);侧栏/工具读热缓存,不必现算
+_TTL = 40.0            # 组合缓存 40s(< 平面45s轮询→每tick真刷新);侧栏读plane的_PORT(150s)不直接打这里
 
 
 def _fx() -> float:
@@ -102,29 +102,36 @@ def compute(live: bool = True) -> dict:
     positions = []
     total_mv = 0.0
     ks_quote = None
+    tc_quote = None
     if live:
         try:
-            from core.tools.market_tools import _ks_quote as _kq   # 只用 klineshare(快),不碰慢的新浪兜底
-            ks_quote = _kq
+            from core.tools.market_tools import _ks_quote as _kq, _tencent_quote as _tq
+            ks_quote, tc_quote = _kq, _tq
         except Exception:  # noqa: BLE001
-            ks_quote = None
+            ks_quote = tc_quote = None
     for r in rows:
         sh = r["shares"] or 0.0
         cost = r["cost"] or 0.0
         px_cny = None
         src = "stored"
         code = (r["code"] or "").strip()
-        # 只对 6 位 A 股走 klineshare 实时(快,~150ms);ETF/港股 klineshare 不支持→快速失败→用快照价。
-        # 关键:绝不在这里走新浪兜底(服务器被 403,每只卡~5秒,13只就是分钟级,曾导致"持仓分析"卡死)。
-        if ks_quote and len(code) == 6 and code.isdigit():
-            try:
-                q = ks_quote(code)
-            except Exception:  # noqa: BLE001
-                q = None
+        # 实时价:A股个股优先 klineshare(快);ETF/港股 klineshare 不支持→腾讯(服务器可达,替代被墙新浪)。
+        if live and code and code.isdigit():
+            q = None
+            if len(code) == 6:
+                try:
+                    q = ks_quote(code)          # A股/ETF:先 klineshare
+                except Exception:  # noqa: BLE001
+                    q = None
+            if not (q and q.get("price")):
+                try:
+                    q = tc_quote(code)          # 港股/ETF/klineshare取不到 → 腾讯
+                except Exception:  # noqa: BLE001
+                    q = None
             if q and q.get("price"):
                 px_cny = q["price"] * fx if r["is_hk"] else q["price"]
                 src = "live"
-        if px_cny is None and r["px_col"]:   # 回退表格现价列(港股/ETF/无代码/取价失败)
+        if px_cny is None and r["px_col"]:   # 回退表格现价列(无代码如智谱/取价失败)
             px_cny = r["px_col"] * fx if r["is_hk"] else r["px_col"]
             src = "px_col"
         cost_cny = cost * fx if r["is_hk"] else cost

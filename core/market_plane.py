@@ -124,18 +124,20 @@ def _poll_once() -> None:
     # ── 路径B:用户标的报价并集去重预热 + 各自算组合 ──
     all_users = [u for u in users.all_users() if u.get("llm_key")]
     codes: set[str] = set()
-    for u in all_users:                              # 先收集所有用户持仓代码(并集)
+    for u in all_users:                              # 先收集所有用户持仓代码(并集:A股/ETF 6位 + 港股 5位)
         tenancy.set_user(u["uid"], None)
         try:
             for r in portfolio_compute._parse_rows():
                 c = (r.get("code") or "").strip()
-                if len(c) == 6 and c.isdigit():
+                if c.isdigit() and len(c) in (5, 6):
                     codes.add(c)
         except Exception:  # noqa: BLE001
             pass
-    for c in codes:                                  # 每只只预热一次(多用户共享报价缓存)
+    for c in codes:                                  # 每只只预热一次(多用户共享报价缓存);捕获涨跌%供异动检测
         try:
-            q = mt._ks_quote(c)
+            q = mt._ks_quote(c) if len(c) == 6 else None
+            if not (q and q.get("change_pct") is not None):
+                q = mt._tencent_quote(c)             # ETF/港股/klineshare取不到 → 腾讯
             if q and q.get("change_pct") is not None:
                 ch = float(q["change_pct"])
                 _QUOTE_CHG[c] = ch * 100 if abs(ch) < 1 else ch   # 兼容比率/百分比两种口径

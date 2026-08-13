@@ -256,16 +256,38 @@ def _handle_quote(args: dict) -> str:
     return _j(_stamp({"quotes": out}, "eastmoney(A股快照)+sina/港股兜底"))
 
 
-def _hk_price(code: str) -> float | None:
-    """新浪港股实时价（HKD）。"""
+def _tencent_quote(code: str) -> dict | None:
+    """腾讯行情(qt.gtimg.cn):A股/ETF/港股都支持,且从服务器可达(替代被墙的新浪 403)。
+    返回 {price, change_pct, prev_close}。code:6位A股/ETF 或 5位港股。"""
+    c = str(code).strip()
+    if len(c) == 5 and c.isdigit():
+        q = "hk" + c                                   # 港股
+    elif len(c) == 6 and c.isdigit():
+        q = ("sh" if c[0] in "569" else "sz") + c      # A股/ETF:5/6/9→沪,0/1/3→深
+    else:
+        return None
     try:
         import httpx
-        r = httpx.get(f"https://hq.sinajs.cn/list=rt_hk{code}",
-                      headers={"Referer": "https://finance.sina.com.cn"}, timeout=8)
-        parts = r.text.split('"')[1].split(",")
-        return float(parts[6]) if len(parts) > 6 else None
+        r = httpx.get(f"https://qt.gtimg.cn/q={q}", timeout=8)
+        raw = r.text
+        i, j = raw.find('"'), raw.rfind('"')
+        if i < 0 or j <= i:
+            return None
+        f = raw[i + 1:j].split("~")
+        if len(f) < 5 or not f[3]:
+            return None
+        price = float(f[3])
+        prev = float(f[4]) if f[4] else None
+        chg = round((price / prev - 1) * 100, 2) if prev else None
+        return {"price": price, "change_pct": chg, "prev_close": prev}
     except Exception:
         return None
+
+
+def _hk_price(code: str) -> float | None:
+    """港股实时价(HKD):腾讯源(服务器可达);新浪已弃(403)。"""
+    q = _tencent_quote(code)
+    return q["price"] if q else None
 
 
 def _f(row, col, default=0.0) -> float:
@@ -305,14 +327,15 @@ def _a_quote_sina(code: str) -> dict | None:
 
 
 def quick_price(code: str) -> float | None:
-    """单只最新价：5 位=港股(HKD)，6 位=A股。告警轮询用,轻量。优先 klineshare,回退新浪。"""
+    """单只最新价:5位=港股(HKD),6位=A股/ETF。优先 klineshare(A股个股),回退腾讯(A股/ETF/港股,服务器可达)。"""
     c = str(code).strip()
     if len(c) == 5:
-        return _hk_price(c)
-    ksq = _ks_quote(c)
+        return _hk_price(c)          # 港股走腾讯
+    ksq = _ks_quote(c)               # A股个股优先 klineshare
     if ksq:
         return ksq["price"]
-    return _a_price_sina(c)
+    tq = _tencent_quote(c)           # ETF / klineshare取不到 → 腾讯(替代被墙新浪)
+    return tq["price"] if tq else None
 
 
 # ────────────────────────── sense_stock_kline ──────────────────────────
