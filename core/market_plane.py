@@ -104,15 +104,13 @@ def _poll_once() -> None:
     from core import users, tenancy, market_env, portfolio_compute
     from core.tools import market_tools as mt
 
-    # ── 路径A:全局大盘 + 热点(与用户无关,一次拉取全体共享) ──
+    # ── 路径A:全局大盘(与用户无关,一次拉取全体共享) ──
     try:
-        _last_env = market_env.classify()          # 预热全局指数缓存
+        _last_env = market_env.classify()          # 预热全局指数缓存(腾讯源,可用)
     except Exception as exc:  # noqa: BLE001
         logger.warning("大盘环境预热失败: %r", exc)
-    try:
-        _last_sectors = _json.loads(mt._handle_sector_flow({}))   # 预热热点板块(全局缓存)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("板块热点预热失败: %r", exc)
+    # 注:热点板块资金流走东财、在服务器被墙(会挂起无超时)→ 暂不在平面预热,由工具按需取;
+    #     待接入可用的板块数据源(P4)再纳入路径A的全局热点预热。
 
     # ── 路径B:用户标的报价并集去重预热 + 各自算组合 ──
     all_users = [u for u in users.all_users() if u.get("llm_key")]
@@ -149,7 +147,9 @@ async def poll_loop(stop: asyncio.Event) -> None:
     logger.info("行情数据平面启动")
     while not stop.is_set():
         try:
-            await asyncio.to_thread(_poll_once)   # 同步取数放线程,不阻塞事件循环
+            await asyncio.wait_for(asyncio.to_thread(_poll_once), timeout=120)   # 硬超时,单tick再慢也不卡死循环
+        except asyncio.TimeoutError:
+            logger.warning("行情平面 tick 超时(>120s),跳过本轮")
         except Exception as exc:  # noqa: BLE001
             _stats["last_err"] = repr(exc)[:120]
             logger.warning("行情平面 tick 异常: %r", exc)
