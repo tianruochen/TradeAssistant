@@ -113,6 +113,7 @@ def compute(live: bool = True) -> dict:
         sh = r["shares"] or 0.0
         cost = r["cost"] or 0.0
         px_cny = None
+        chg_today = None      # 今日涨跌%(来自实时报价,权威;避免模型自己凑今日涨跌)
         src = "stored"
         code = (r["code"] or "").strip()
         # 实时价:A股个股优先 klineshare(快);ETF/港股 klineshare 不支持→腾讯(服务器可达,替代被墙新浪)。
@@ -130,6 +131,7 @@ def compute(live: bool = True) -> dict:
                     q = None
             if q and q.get("price"):
                 px_cny = q["price"] * fx if r["is_hk"] else q["price"]
+                chg_today = q.get("change_pct")
                 src = "live"
         if px_cny is None and r["px_col"]:   # 回退表格现价列(无代码如智谱/取价失败)
             px_cny = r["px_col"] * fx if r["is_hk"] else r["px_col"]
@@ -151,6 +153,7 @@ def compute(live: bool = True) -> dict:
         positions.append({
             "name": r["name"], "code": code, "shares": sh,
             "cost_cny": round(cost_cny, 3), "price_cny": round(px_cny, 3) if px_cny is not None else None,
+            "change_pct_today": round(chg_today, 2) if chg_today is not None else None,
             "market_value": round(mv), "pnl": round(pnl) if pnl is not None else None,
             "pnl_pct": pnl_pct, "price_source": src, "market": r["market"],
         })
