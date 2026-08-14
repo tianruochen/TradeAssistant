@@ -200,6 +200,7 @@
       <div class="ov-row" style="margin-top:8px">
         <span class="ov-btn" id="stratLink">📋 策略</span>
         <span class="ov-btn" id="cronLink">⏰ 定时任务</span>
+        <span class="ov-btn" id="lessonLink">📕 教训</span>
       </div>
     </div>
     <div class="scard">
@@ -368,7 +369,7 @@ let openView=null;
 function refreshViewLinks(){const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=openView===v?'返回':'查看';};
   set('ledgerLink','ledger');set('chkLink','chk');
   const act=(id,v)=>{const e=document.getElementById(id);if(e)e.classList.toggle('active',openView===v);};
-  act('holdLink','holdings');act('watchLink','watchlist');act('perfLink','perf');act('stratLink','strategy');act('cronLink','cron');}
+  act('holdLink','holdings');act('watchLink','watchlist');act('perfLink','perf');act('stratLink','strategy');act('cronLink','cron');act('lessonLink','lesson');}
 function backToChat(){thv.style.display='none';thread.style.display='';feed.scrollTop=feed.scrollHeight;openView=null;refreshViewLinks();updateToBottom();}
 // 速览:纯读 holdings.md / watchlist.md,秒开不耗 LLM
 let lastAssets={};
@@ -472,6 +473,24 @@ document.getElementById('holdLink').onclick=()=>{if(openView==='holdings')return
 document.getElementById('watchLink').onclick=()=>{if(openView==='watchlist')return backToChat();loadAssets().then(()=>{openAssets('watchlist');openView='watchlist';refreshViewLinks();});};
 document.getElementById('stratLink').onclick=()=>{if(openView==='strategy')return backToChat();openStrategy();openView='strategy';refreshViewLinks();};
 document.getElementById('cronLink').onclick=()=>{if(openView==='cron')return backToChat();openSchedule();openView='cron';refreshViewLinks();};
+// 教训库:历次错误/冲动/破纪律及亏损
+const _LCAT={'破纪律':'#ef4444','冲动':'#f59e0b','追高':'#f59e0b','不止损':'#ef4444','频繁交易':'#f59e0b','误判':'#a855f7','数据错':'#6b7280','其他':'#6b7280'};
+async function openLessons(){
+  let d={};try{d=await(await authFetch('/api/lessons')).json()}catch(e){}
+  const items=d.items||[];
+  const cats=Object.entries(d.by_category||{}).map(([k,v])=>`${k} ${v}`).join(' · ')||'暂无';
+  const rows=items.map(x=>{const col=_LCAT[x.category]||'#6b7280';
+    return `<div class="notif-item" style="border-left:3px solid ${col};padding-left:10px;margin:8px 0">
+      <div class="nt"><b style="color:${col}">[${x.category}]</b> ${(x.name||x.symbol||'').replace(/</g,'&lt;')} <span class="ts">${x.ts||''}</span>${x.loss?` <span style="color:#ef4444">亏 ¥${Math.round(x.loss).toLocaleString()}</span>`:''}</div>
+      <div class="nx">${(x.desc||'').replace(/</g,'&lt;')}${x.lesson?`<br><span style="color:var(--sub)">💡 教训:${(x.lesson).replace(/</g,'&lt;')}</span>`:''}</div></div>`;}).join('')||'<p style="color:var(--sub);font-size:12px">还没有记录。当出现破纪律/冲动/追高/不止损导致的亏损时，Alpha 会自动记进这里；你也可以直接对它说「把刚才XX这次教训记下来」。</p>';
+  thv.innerHTML=`<span class="back" id="lsBack">← 返回对话</span>
+    <h2 style="margin:8px 0">📕 交易教训库 <span style="font-size:12px;font-weight:400;color:var(--sub)">共 ${d.count||0} 条${d.total_loss?` · 累计估算亏损 ¥${Math.round(d.total_loss).toLocaleString()}`:''}</span></h2>
+    <div style="font-size:12px;color:var(--sub);margin-bottom:10px">分类:${cats}</div>${rows}
+    <p style="color:var(--sub);font-size:12px;margin-top:14px">每一次错误、冲动、不守纪律都记在案 —— 长期复盘，避免重犯同样的错、亏同样的钱。</p>`;
+  thread.style.display='none';thv.style.display='';feed.scrollTop=0;
+  document.getElementById('lsBack').onclick=backToChat;
+}
+document.getElementById('lessonLink').onclick=()=>{if(openView==='lesson')return backToChat();openLessons();openView='lesson';refreshViewLinks();};
 // 绩效(track record):资产曲线 + 已实现盈亏/胜率/最大回撤
 let lastPerf={},lastAttr=null;
 async function loadPerf(){try{lastPerf=await authFetch('/api/performance').then(r=>r.json());}catch(e){lastPerf={};}}

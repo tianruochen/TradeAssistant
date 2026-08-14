@@ -54,6 +54,27 @@ def decisions() -> list[dict]:
     return _read("decisions.jsonl")
 
 
+def lessons() -> list[dict]:
+    return _read("lessons.jsonl")
+
+
+def lessons_summary() -> dict:
+    """教训汇总:总条数、按类别计数、累计估算亏损、最近几条。供 /api/lessons + 复盘。"""
+    ls = lessons()
+    by_cat: dict[str, int] = {}
+    total_loss = 0.0
+    for x in ls:
+        by_cat[x.get("category") or "其他"] = by_cat.get(x.get("category") or "其他", 0) + 1
+        try:
+            total_loss += float(x.get("loss") or 0)
+        except (TypeError, ValueError):
+            pass
+    return {"count": len(ls), "by_category": by_cat,
+            "total_loss": round(total_loss, 2),
+            "items": ls[::-1]}   # 最新在前
+
+
+
 def realized_pnl() -> dict:
     """FIFO 撮合已实现盈亏(不计手续费,MVP)。返回 总额 + 每标的。"""
     lots: dict[str, list[list]] = {}   # symbol -> [[shares, price], ...] 买入队列
@@ -207,6 +228,33 @@ def _handle_compute_portfolio(_args: dict) -> str:
     return json.dumps(portfolio_compute.compute(live=True), ensure_ascii=False)
 
 
+_LESSON_CATS = ["破纪律", "冲动", "追高", "不止损", "频繁交易", "误判", "数据错", "其他"]
+
+
+def _handle_log_lesson(args: dict) -> str:
+    cat = (args.get("category") or "其他").strip()
+    if cat not in _LESSON_CATS:
+        cat = "其他"
+    desc = (args.get("desc") or "").strip()
+    lesson = (args.get("lesson") or "").strip()
+    if not desc:
+        return json.dumps({"error": "desc(发生了什么)不能为空"}, ensure_ascii=False)
+    recs = lessons()
+    try:
+        loss = float(args.get("loss")) if args.get("loss") not in (None, "") else None
+    except (TypeError, ValueError):
+        loss = None
+    rec = {"id": _next_id(recs), "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+           "category": cat, "symbol": str(args.get("symbol") or ""),
+           "name": str(args.get("name") or ""), "desc": desc, "lesson": lesson, "loss": loss}
+    _append("lessons.jsonl", rec)
+    return json.dumps({"ok": True, "logged": rec, "total_lessons": len(recs) + 1}, ensure_ascii=False)
+
+
+def _handle_read_lessons(_args: dict) -> str:
+    return json.dumps(lessons_summary(), ensure_ascii=False)
+
+
 
 def _handle_log_decision(args: dict) -> str:
     rec = {"ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -269,6 +317,23 @@ def register() -> None:
         "description": "代码现算组合总资产/盈亏/仓位%——**报总资产、总盈亏、持仓市值、仓位占比、翻倍进度时必须调它,禁止照抄 holdings.md 手打的汇总数或自己心算**。持仓列表取自 holdings.md(股数/成本),市值=股数×实时价(港股按汇率折CNY),现价实时。返回每只与合计。",
         "parameters": {"type": "object", "properties": {}},
     }, _handle_compute_portfolio)
+    registry.register("log_lesson", {
+        "name": "log_lesson",
+        "description": "记录一条交易教训(每次破纪律/冲动/追高/不止损/频繁交易/误判/数据错导致的亏损或反面案例都要记)。用于长期复盘、避免重犯。",
+        "parameters": {"type": "object", "properties": {
+            "category": {"type": "string", "enum": _LESSON_CATS, "description": "教训类别"},
+            "symbol": {"type": "string", "description": "相关标的代码(可选)"},
+            "name": {"type": "string", "description": "相关标的名称(可选)"},
+            "desc": {"type": "string", "description": "发生了什么(具体事实:做了什么冲动/违纪操作)"},
+            "lesson": {"type": "string", "description": "教训/以后怎么避免"},
+            "loss": {"type": "number", "description": "由此造成的亏损金额(¥,可选;能估就估)"}},
+            "required": ["category", "desc"]},
+    }, _handle_log_lesson)
+    registry.register("read_lessons", {
+        "name": "read_lessons",
+        "description": "读交易教训库(历次错误/冲动/破纪律及亏损)。复盘、给建议前可读,提醒自己别重犯同样的错。",
+        "parameters": {"type": "object", "properties": {}},
+    }, _handle_read_lessons)
     registry.register("log_decision", {
         "name": "log_decision",
         "description": "记录一条买卖分析/提示(给出方向性提示时调),事后可对照结果复盘胜率。",

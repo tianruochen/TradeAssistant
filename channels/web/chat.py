@@ -112,6 +112,20 @@ async def chat_stream(request: web.Request) -> web.StreamResponse:
         if not client_gone:
             await send({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
     finally:
+        # 数字校验:抓正文里编造的持仓现价/涨跌,附「数据核对」更正(以实时为准),再存历史
+        try:
+            full = "".join(assistant_parts)
+            if full.strip() and not client_gone:
+                from core import verify, market_plane, tenancy
+                uid = tenancy.CURRENT_UID.get()
+                pf = market_plane.get_portfolio(uid) if uid else None
+                issues = verify.check_holdings_numbers(full, (pf or {}).get("positions") or [])
+                if issues:
+                    foot = "\n\n---\n⚠️ **数据核对**（正文数字与实时不符，以实时为准）：\n" + "\n".join("- " + i for i in issues)
+                    await send({"type": "content", "delta": foot})
+                    assistant_parts.append(foot)
+        except Exception:
+            pass
         # 先回填历史(即使写失败/客户端已断开,也保住本轮),再收尾
         try:
             from core.history import log_turn_close

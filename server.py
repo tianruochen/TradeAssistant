@@ -219,6 +219,11 @@ async def strategy_get(_req: web.Request) -> web.Response:
     return web.json_response({"text": p.read_text(encoding="utf-8") if p.exists() else ""})
 
 
+async def lessons_handler(_req: web.Request) -> web.Response:
+    from core.tools.ledger_tools import lessons_summary
+    return web.json_response(lessons_summary())
+
+
 async def strategy_post(req: web.Request) -> web.Response:
     from core.config import data_dir
     b = await req.json()
@@ -283,6 +288,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/settings", settings_post)
     app.router.add_get("/api/strategy", strategy_get)
     app.router.add_post("/api/strategy", strategy_post)
+    app.router.add_get("/api/lessons", lessons_handler)
     app.router.add_get("/api/attribution", attribution_handler)
     app.router.add_get("/", index)
     app.router.add_post("/api/chat/stream", chat_stream)     # SSE 接真 agent
